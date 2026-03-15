@@ -27,7 +27,7 @@
   - 让研究主线越来越清晰，而不是每天看完就散掉
 - 自托管友好
   - 可直接跑 `daily-run.js`
-  - 也可以启用 `Codex worker + heartbeat monitor` 高级模式
+  - 默认按 `Codex worker + heartbeat monitor` 路径设计
   - 提供 Web 控制台、Docker Compose 与宿主机脚本
 
 ## 仓库结构
@@ -54,7 +54,7 @@ research-intel/
 - Chrome / Chromium
   - 用于 HTML 浏览器校验
 - `tmux` 与 `codex`
-  - 仅当你要启用 `RESEARCH_INTEL_RUN_MODE=codex`
+  - 默认部署路径需要这两项
 
 ### Docker 模式
 
@@ -93,7 +93,25 @@ npm install
 cp .env.example .env
 ```
 
-然后把 `.env` 里的模型、Telegram、Web 密码等配置改成自己的值。
+然后至少把 `.env` 里的这些配置改成自己的值：
+
+- 模型链路
+  - `RESEARCH_INTEL_API_BASE_URL`
+  - `RESEARCH_INTEL_API_KEY`
+  - `RESEARCH_INTEL_HTML_MODELS`
+  - `RESEARCH_INTEL_CHAT_TIMEOUT_MS`：可选，默认 `60000`，用于限制 HTML 生成与 daily curation 的单次模型请求等待时间，避免 fresh clone 卡死在无响应接口上
+- Telegram 推送
+  - `TELEGRAM_BOT_TOKEN`
+  - `TELEGRAM_CHAT_ID`
+  - 如果你本机访问 Telegram API 需要代理，再设置 `TELEGRAM_USE_PROXY=true` 与 `TELEGRAM_PROXY_URL`
+- Web 控制台
+  - `RESEARCH_INTEL_WEB_PASSWORD`
+  - `RESEARCH_INTEL_WEB_SESSION_SECRET`
+
+`RESEARCH_INTEL_CODEX_HTML_MODEL` 默认启用：
+
+- 默认值 `gpt-5.4-mini`：启用 `codex exec` 对论文 HTML 做二次强化
+- 留空：手动跳过 Codex HTML 强化，作为降级/调试路径
 
 ### 2. 初始化研究画像
 
@@ -131,6 +149,14 @@ npm run daily:no-telegram
 
 如果链路通了，再去掉 `--no-telegram`。
 
+如果你已经把 Telegram 配置填好，可以直接跑：
+
+```bash
+npm run daily
+```
+
+第一次建议先用 `daily:no-telegram` 验证模型与 HTML 链路，再切到真实推送。
+
 ### 4. 启动 Web 控制台
 
 ```bash
@@ -160,23 +186,24 @@ http://127.0.0.1:3086/research-intel/
 
 `Research Intel` 有两种执行模式：
 
-- `direct`
-  - 直接执行 `daily-run.js`
-  - 面向开源用户，依赖少、部署简单
 - `codex`
   - 通过 `codex-supervisor.js` 启动 tmux worker、心跳监控、恢复路径
-  - 更适合已经把 Codex 工作流接进自己环境的人
+  - 默认推荐模式
+- `direct`
+  - 直接执行 `daily-run.js`
+  - 作为降级和调试路径保留
+  - 如果 `.env` 里留空 `RESEARCH_INTEL_CODEX_HTML_MODEL`，会跳过 Codex HTML 强化
 
 通过 `.env` 里的 `RESEARCH_INTEL_RUN_MODE` 切换：
 
 ```env
-RESEARCH_INTEL_RUN_MODE=direct
+RESEARCH_INTEL_RUN_MODE=codex
 ```
 
-或：
+如果你明确不想走 Codex worker，再手动改成：
 
 ```env
-RESEARCH_INTEL_RUN_MODE=codex
+RESEARCH_INTEL_RUN_MODE=direct
 ```
 
 ## Docker Compose

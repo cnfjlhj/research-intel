@@ -5,6 +5,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { spawnSync } = require('child_process');
 const puppeteer = require('puppeteer-core');
+const { runCommandWithTimeout } = require('./process-runner');
 
 const KATEX_VERSION = '0.16.9';
 const KATEX_PRIMARY_BASE_URL = `https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist`;
@@ -19,6 +20,99 @@ const REQUIRED_VISIBLE_HEADINGS = [
   'Rebuttal 过程（如果有）',
   'One More Thing'
 ];
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function decodeHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function normalizeWhitespace(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function truncateText(value, maxLength = 220) {
+  const normalized = normalizeWhitespace(value);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function coerceStringList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(item => normalizeWhitespace(typeof item === 'string' ? item : item?.name || item?.title || item?.full_name || ''))
+    .filter(Boolean);
+}
+
+function extractSentences(text, limit = 8) {
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) {
+    return [];
+  }
+
+  const matches = normalized.match(/[^。！？.!?]+[。！？.!?]?/g) || [normalized];
+  return [...new Set(matches.map(item => normalizeWhitespace(item)).filter(Boolean))].slice(0, limit);
+}
+
+function pickSentencesByKeyword(text, keywords, limit = 2) {
+  const loweredKeywords = (keywords || []).map(keyword => String(keyword || '').toLowerCase());
+  return extractSentences(text, 16)
+    .filter(sentence => loweredKeywords.some(keyword => sentence.toLowerCase().includes(keyword)))
+    .slice(0, limit);
+}
+
+function formatDateLabel(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '日期信息未提供';
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
+function pickSummaryText(meta = {}, paperTextPreview = '') {
+  const candidates = [
+    meta.summary,
+    meta.tldr,
+    meta.abstract,
+    paperTextPreview
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = truncateText(candidate, 260);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return '当前自动化流程已经拿到论文题目与局部正文，但还没有更多可稳定引用的外部材料。';
+}
+
+function stripTags(value) {
+  return decodeHtmlEntities(String(value || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+
+function findMissingVisibleHeadings(html) {
+  const headingTexts = [...String(html || '').matchAll(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi)]
+    .map(match => stripTags(match[1]));
+
+  return REQUIRED_VISIBLE_HEADINGS.filter(marker => !headingTexts.some(text => text.includes(marker)));
+}
 
 function buildTemplateDesignReference(templateHtml = '') {
   const normalized = String(templateHtml || '');
@@ -449,6 +543,345 @@ function buildHtmlEnhancementPrompt({
   ].join('\n');
 }
 
+function buildDeterministicFallbackHtml({
+  meta = {},
+  openreviewSummary = '',
+  paperTextPreview = '',
+  webCoverage = {}
+}) {
+  const title = normalizeWhitespace(meta.title) || '未命名论文';
+  const summary = pickSummaryText(meta, paperTextPreview);
+  const authors = coerceStringList(meta.authors);
+  const chineseBlogs = coerceStringList(webCoverage.chineseBlogs);
+  const codeRepos = coerceStringList(webCoverage.codeRepos);
+  const methodSignals = pickSentencesByKeyword(
+    `${meta.abstract || ''} ${paperTextPreview || ''}`,
+    ['method', 'framework', 'model', 'agent', 'planning', 'reflect', 'memory', 'module', 'reasoning', 'segmentation'],
+    3
+  );
+  const experimentSignals = pickSentencesByKeyword(
+    paperTextPreview,
+    ['experiment', 'benchmark', 'dataset', 'baseline', 'ablation', 'training', 'evaluation', 'setup', 'prompt', 'hyperparameter'],
+    3
+  );
+  const resultSignals = pickSentencesByKeyword(
+    `${meta.abstract || ''} ${paperTextPreview || ''}`,
+    ['result', 'results', 'improve', 'performance', 'benchmark', 'ablation', 'gain', 'outperform', 'alignment'],
+    3
+  );
+  const quickFacts = [
+    ['发布日期', formatDateLabel(meta.published)],
+    ['arXiv', normalizeWhitespace(meta?.arxiv?.id || meta.arxivId || '') || '未提供'],
+    ['作者', authors.length ? truncateText(authors.join(', '), 120) : '当前元数据未完整暴露作者列表'],
+    ['社区线索', `${chineseBlogs.length} 条中文长文 / ${codeRepos.length} 个代码仓线索`]
+  ];
+  const readingChecklist = [
+    '先读 Hero 与一页速览，建立问题域和贡献边界。',
+    '再看“数学表示及建模”和“实验方法与实验设计”，确认方法闭环与复现条件。',
+    '最后结合末尾的论文页面证据区，交叉检查表格、图示和附录细节。'
+  ];
+  const reviewAngles = [
+    `优点：${title} 明显在试图把任务流程做成完整闭环，而不是只在某个局部模块上做小修小补。`,
+    '风险：如果核心增益主要来自更长推理链、更重工程堆叠或更强提示词，而不是建模本身，那么跨任务迁移性需要额外验证。',
+    '建议：重点对照证据页中的主结果、消融实验和附录设置，确认结论是否由关键设计稳定支撑。'
+  ];
+  const rebuttalText = truncateText(openreviewSummary, 420);
+  const insightCards = [
+    {
+      title: '核心问题',
+      body: `这篇工作围绕“${title}”对应的问题设置展开，目标是把论文题目中的关键能力落到一个可以复盘、可以比较、也可以讨论局限的技术框架里。`
+    },
+    {
+      title: '一句话把握',
+      body: summary
+    },
+    {
+      title: '验证重点',
+      body: '阅读时优先核对方法闭环、实验边界、主结果是否和证据页一致，而不是只看摘要式宣传。'
+    }
+  ];
+
+  const renderList = items => items.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+  const renderCards = cards => cards.map(card => [
+    '<article class="ri-insight-card">',
+    `<h3>${escapeHtml(card.title)}</h3>`,
+    `<p>${escapeHtml(card.body)}</p>`,
+    '</article>'
+  ].join('')).join('');
+  const renderFactCards = quickFacts.map(([label, value]) => [
+    '<div class="ri-fact-card">',
+    `<span class="ri-fact-label">${escapeHtml(label)}</span>`,
+    `<strong>${escapeHtml(value)}</strong>`,
+    '</div>'
+  ].join('')).join('');
+  const renderSignalList = (items, fallbackItems) => {
+    const source = items.length ? items : fallbackItems;
+    return source.map(item => `<li>${escapeHtml(truncateText(item, 220))}</li>`).join('');
+  };
+
+  return [
+    '<!DOCTYPE html>',
+    '<html lang="zh-CN">',
+    '<head>',
+    '  <meta charset="utf-8">',
+    '  <meta name="viewport" content="width=device-width, initial-scale=1">',
+    '  <meta name="color-scheme" content="light">',
+    '  <link rel="icon" href="data:,">',
+    `  <title>${escapeHtml(title)}</title>`,
+    '  <style>',
+    '    :root {',
+    '      --ri-bg: #f4f1ea;',
+    '      --ri-surface: rgba(255, 252, 247, 0.78);',
+    '      --ri-panel: rgba(255, 255, 255, 0.72);',
+    '      --ri-border: rgba(24, 34, 54, 0.14);',
+    '      --ri-text: #172033;',
+    '      --ri-muted: #51607b;',
+    '      --ri-accent: #bf5b2c;',
+    '      --ri-accent-soft: rgba(191, 91, 44, 0.12);',
+    '      --ri-shadow: 0 24px 70px rgba(24, 34, 54, 0.12);',
+    '      --ri-radius: 28px;',
+    '    }',
+    '    * { box-sizing: border-box; }',
+    '    html { scroll-behavior: smooth; }',
+    '    body {',
+    '      margin: 0;',
+    '      min-height: 100vh;',
+    '      color: var(--ri-text);',
+    '      background:',
+    '        radial-gradient(circle at top left, rgba(238, 199, 116, 0.22), transparent 32%),',
+    '        radial-gradient(circle at top right, rgba(112, 146, 255, 0.18), transparent 30%),',
+    '        linear-gradient(180deg, #fbf8f2 0%, var(--ri-bg) 52%, #efe9de 100%);',
+    '      font-family: "Charter", "Iowan Old Style", Georgia, serif;',
+    '      line-height: 1.72;',
+    '    }',
+    '    a { color: inherit; }',
+    '    .ri-shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 64px; }',
+    '    .ri-topbar {',
+    '      display: flex;',
+    '      align-items: center;',
+    '      justify-content: space-between;',
+    '      gap: 16px;',
+    '      padding: 12px 18px;',
+    '      border: 1px solid var(--ri-border);',
+    '      border-radius: 999px;',
+    '      background: rgba(255, 255, 255, 0.58);',
+    '      backdrop-filter: blur(18px);',
+    '      box-shadow: 0 10px 30px rgba(23, 32, 51, 0.08);',
+    '      position: sticky;',
+    '      top: 16px;',
+    '      z-index: 30;',
+    '    }',
+    '    .ri-topbar nav { display: flex; flex-wrap: wrap; gap: 10px 14px; font-size: 13px; color: var(--ri-muted); }',
+    '    .ri-topbar nav a { text-decoration: none; }',
+    '    .ri-brand { font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ri-accent); }',
+    '    .ri-hero {',
+    '      margin-top: 24px;',
+    '      padding: 44px;',
+    '      border-radius: calc(var(--ri-radius) + 8px);',
+    '      background: linear-gradient(135deg, rgba(255,255,255,0.82), rgba(255,248,240,0.66));',
+    '      border: 1px solid rgba(255,255,255,0.6);',
+    '      box-shadow: var(--ri-shadow);',
+    '      overflow: hidden;',
+    '      position: relative;',
+    '    }',
+    '    .ri-hero::after {',
+    '      content: "";',
+    '      position: absolute;',
+    '      inset: auto -14% -28% auto;',
+    '      width: 340px;',
+    '      height: 340px;',
+    '      border-radius: 50%;',
+    '      background: radial-gradient(circle, rgba(191, 91, 44, 0.18) 0%, rgba(191, 91, 44, 0) 68%);',
+    '      pointer-events: none;',
+    '    }',
+    '    .ri-kicker { font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ri-accent); }',
+    '    h1, h2, h3 { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.08; }',
+    '    h1 { margin-top: 12px; font-size: clamp(34px, 6vw, 62px); max-width: 14ch; }',
+    '    .ri-hero p { max-width: 60ch; margin: 20px 0 0; font-size: 18px; color: #24314c; }',
+    '    .ri-chip-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }',
+    '    .ri-chip {',
+    '      padding: 10px 14px;',
+    '      border-radius: 999px;',
+    '      background: rgba(23, 32, 51, 0.06);',
+    '      border: 1px solid rgba(23, 32, 51, 0.1);',
+    '      font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;',
+    '      color: var(--ri-muted);',
+    '    }',
+    '    .ri-facts {',
+    '      display: grid;',
+    '      grid-template-columns: repeat(4, minmax(0, 1fr));',
+    '      gap: 16px;',
+    '      margin-top: 22px;',
+    '    }',
+    '    .ri-fact-card, .ri-panel, .ri-insight-card {',
+    '      border: 1px solid var(--ri-border);',
+    '      background: var(--ri-panel);',
+    '      backdrop-filter: blur(18px);',
+    '      border-radius: 22px;',
+    '      box-shadow: 0 12px 28px rgba(23, 32, 51, 0.08);',
+    '    }',
+    '    .ri-fact-card { padding: 18px; }',
+    '    .ri-fact-label { display: block; font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ri-muted); margin-bottom: 8px; }',
+    '    .ri-fact-card strong { display: block; font-size: 17px; }',
+    '    .ri-insight-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 28px; }',
+    '    .ri-insight-card { padding: 24px; }',
+    '    .ri-insight-card p { margin: 12px 0 0; color: #2d3a53; }',
+    '    .ri-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(290px, 0.9fr); gap: 24px; margin-top: 28px; }',
+    '    main { display: grid; gap: 20px; }',
+    '    .ri-panel { padding: 28px; }',
+    '    .ri-panel h2 { font-size: clamp(24px, 3vw, 34px); margin-bottom: 18px; }',
+    '    .ri-panel p { margin: 0 0 14px; color: #293751; }',
+    '    .ri-panel ul { margin: 0; padding-left: 20px; color: #293751; }',
+    '    .ri-panel li + li { margin-top: 10px; }',
+    '    .ri-subgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }',
+    '    .ri-subcard { padding: 18px; border-radius: 18px; background: rgba(191, 91, 44, 0.06); border: 1px solid rgba(191, 91, 44, 0.12); }',
+    '    .ri-subcard h3 { font-size: 17px; margin-bottom: 10px; }',
+    '    .ri-aside { display: grid; gap: 18px; align-self: start; position: sticky; top: 84px; }',
+    '    .ri-note { padding: 22px; }',
+    '    .ri-note h3 { font-size: 18px; margin-bottom: 12px; }',
+    '    .ri-note ol, .ri-note ul { margin: 0; padding-left: 20px; }',
+    '    .ri-quote { margin: 0; padding: 18px 20px; border-left: 4px solid var(--ri-accent); background: var(--ri-accent-soft); border-radius: 18px; color: #22314a; }',
+    '    .ri-foot { margin-top: 18px; font-size: 14px; color: var(--ri-muted); }',
+    '    @media (max-width: 980px) {',
+    '      .ri-facts, .ri-insight-grid, .ri-layout, .ri-subgrid { grid-template-columns: 1fr; }',
+    '      .ri-aside { position: static; }',
+    '      .ri-hero { padding: 30px 24px; }',
+    '      .ri-topbar { border-radius: 24px; align-items: flex-start; }',
+    '    }',
+    '  </style>',
+    '</head>',
+    '<body>',
+    '  <div class="ri-shell">',
+    '    <header class="ri-topbar">',
+    '      <div class="ri-brand">research intel fallback</div>',
+    '      <nav>',
+    '        <a href="#motivation">研究动机</a>',
+    '        <a href="#math">数学表示及建模</a>',
+    '        <a href="#experiment">实验方法与实验设计</a>',
+    '        <a href="#results">实验结果及核心结论</a>',
+    '        <a href="#comment">评论</a>',
+    '        <a href="#rebuttal">Rebuttal 过程（如果有）</a>',
+    '        <a href="#omt">One More Thing</a>',
+    '      </nav>',
+    '    </header>',
+    '    <section class="ri-hero">',
+    '      <div class="ri-kicker">Deterministic Research Page</div>',
+    `      <h1>${escapeHtml(title)}</h1>`,
+    `      <p>${escapeHtml(summary)}</p>`,
+    '      <div class="ri-chip-row">',
+    `        <span class="ri-chip">发布日期：${escapeHtml(formatDateLabel(meta.published))}</span>`,
+    `        <span class="ri-chip">arXiv：${escapeHtml(normalizeWhitespace(meta?.arxiv?.id || meta.arxivId || '') || '未提供')}</span>`,
+    `        <span class="ri-chip">作者数：${escapeHtml(String(authors.length || 0))}</span>`,
+    `        <span class="ri-chip">社区线索：${escapeHtml(String(chineseBlogs.length + codeRepos.length))} 条</span>`,
+    '      </div>',
+    `      <div class="ri-facts">${renderFactCards}</div>`,
+    `      <div class="ri-insight-grid">${renderCards(insightCards)}</div>`,
+    '    </section>',
+    '    <div class="ri-layout">',
+    '      <main>',
+    '        <section class="ri-panel" id="motivation">',
+    '          <h2>研究动机</h2>',
+    `          <p>从题目、摘要和当前可用正文抽取来看，这篇论文主要在处理“${escapeHtml(title)}”所对应的问题闭环。它关注的不只是单点模型效果，而是要把任务定义、决策逻辑、反馈信号和后续迭代放进同一个分析框架里。</p>`,
+    `          <p>${escapeHtml(summary)} 这说明作者希望给出一套更稳的任务解释路径，而不是只靠一句高层结论让读者接受方法有效。</p>`,
+    '          <div class="ri-subgrid">',
+    '            <div class="ri-subcard">',
+    '              <h3>问题压力</h3>',
+    '              <p>如果没有更强的闭环或结构化设计，复杂任务通常会在长链路推理、信息累积或控制稳定性上出现掉点。</p>',
+    '            </div>',
+    '            <div class="ri-subcard">',
+    '              <h3>阅读重点</h3>',
+    '              <p>应优先判断作者提出的新结构到底改变了什么信息流，而不是先被包装性的叙述带着走。</p>',
+    '            </div>',
+    '          </div>',
+    '        </section>',
+    '        <section class="ri-panel" id="math">',
+    '          <h2>数学表示及建模</h2>',
+    '          <p>当前自动抽取文本没有稳定暴露完整符号表和公式推导，因此这里不伪造具体公式，而是先保留问题建模骨架：系统状态、候选动作、反馈或评价信号、以及更新后的内部记忆或策略状态。</p>',
+    '          <ul>',
+    renderSignalList(methodSignals, [
+      '从可见文本判断，方法更像是把“规划/推理/执行/反思/更新”串成一个可反复迭代的闭环，而不是单次前向预测。',
+      '如果正文或附录有显式目标函数、损失项或状态转移定义，应重点检查它们是否真的支撑了作者声称的泛化能力。',
+      '建模部分最值得核对的是：哪些变量是被显式维护的，哪些改进来自结构，哪些只来自更长的上下文或提示词。'
+    ]),
+    '          </ul>',
+    '        </section>',
+    '        <section class="ri-panel" id="experiment">',
+    '          <h2>实验方法与实验设计</h2>',
+    '          <p>复现实验时，最关键的是把任务设置、数据来源、基线范围、训练或推理配置、以及附录里补充的实现条件一并看齐。否则只看主文主表，很容易高估方法的真实可迁移性。</p>',
+    '          <ul>',
+    renderSignalList(experimentSignals, [
+      '优先确认论文到底比较了哪些强基线，以及这些基线是否在同一资源预算下被公平实现。',
+      '如果论文涉及多阶段流程，需要分别看清每一阶段的输入、输出、评价信号和停止条件。',
+      '附录中的训练设置、推理轮数、提示模板或超参数通常决定方法是否可复现，不应在阅读时被跳过。'
+    ]),
+    '          </ul>',
+    '        </section>',
+    '        <section class="ri-panel" id="results">',
+    '          <h2>实验结果及核心结论</h2>',
+    '          <p>这部分的判断标准不该只是“有没有赢”，而是“赢在什么任务、什么设置、什么代价下”，以及这些提升是否被消融实验和错误分析共同支撑。</p>',
+    '          <ul>',
+    renderSignalList(resultSignals, [
+      '主结果需要和 baseline 对照、消融实验以及附录中的额外表格一起看，才能判断增益是否稳定。',
+      '如果论文把结论建立在复杂链路或多组件交互上，最应该检查的是各组件拆开后是否仍然有足够解释力。',
+      '当自动抽取没有暴露完整数字时，应把证据页中的表格和图示作为最终核验依据，而不是自行脑补精确幅度。'
+    ]),
+    '          </ul>',
+    '        </section>',
+    '        <section class="ri-panel" id="comment">',
+    '          <h2>评论</h2>',
+    '          <p>这篇工作的亮点，在于它至少试图把论文题目对应的问题变成一个更完整的系统，而不是只在局部技巧上堆名词。只要实验设置没有偷换边界，这种闭环化思路通常比单点 patch 更值得关注。</p>',
+    '          <ul>',
+    renderList(reviewAngles),
+    '          </ul>',
+    '        </section>',
+    '        <section class="ri-panel" id="rebuttal">',
+    '          <h2>Rebuttal 过程（如果有）</h2>',
+    rebuttalText
+      ? `          <blockquote class="ri-quote">${escapeHtml(rebuttalText)}</blockquote>`
+      : '          <blockquote class="ri-quote">当前公开材料里没有稳定可用的 rebuttal 细节；这并不等于没有争议，只是当前自动流程不额外编造。</blockquote>',
+    '          <p class="ri-foot">如果后续补到完整 OpenReview 线程，这一节最应该补的是：审稿人真正质疑了什么、作者回应了哪些证据、哪些误解被澄清、哪些问题仍然悬而未决。</p>',
+    '        </section>',
+    '        <section class="ri-panel" id="omt">',
+    '          <h2>One More Thing</h2>',
+    '          <p>这份页面是 deterministic fallback：它的目标不是替代高质量人工解读，而是在模型输出不稳定时，至少保留一份结构完整、可继续阅读、也不会误导后续自动链路的论文页面。</p>',
+    '          <div class="ri-subgrid">',
+    '            <div class="ri-subcard">',
+    '              <h3>中文长文线索</h3>',
+    `              <p>${escapeHtml(chineseBlogs.length ? truncateText(chineseBlogs.join('；'), 180) : '当前抓取里还没有稳定命中的中文长文。')}</p>`,
+    '            </div>',
+    '            <div class="ri-subcard">',
+    '              <h3>代码仓线索</h3>',
+    `              <p>${escapeHtml(codeRepos.length ? truncateText(codeRepos.join('；'), 180) : '当前抓取里还没有确认的公开代码仓。')}</p>`,
+    '            </div>',
+    '          </div>',
+    '        </section>',
+    '      </main>',
+    '      <aside class="ri-aside">',
+    '        <section class="ri-panel ri-note">',
+    '          <h3>阅读顺序建议</h3>',
+    '          <ol>',
+    renderList(readingChecklist),
+    '          </ol>',
+    '        </section>',
+    '        <section class="ri-panel ri-note">',
+    '          <h3>复现时别跳过</h3>',
+    '          <ul>',
+    renderList([
+      '基线是否同预算',
+      '附录是否给了关键配置',
+      '主结果是否被消融支撑',
+      '证据页中的图表是否和正文说法一致'
+    ]),
+    '          </ul>',
+    '        </section>',
+    '      </aside>',
+    '    </div>',
+    '  </div>',
+    '</body>',
+    '</html>'
+  ].join('\n');
+}
+
 function countPdfPages(pdfPath) {
   const result = spawnSync('pdfinfo', [pdfPath], { encoding: 'utf8' });
   if (result.status !== 0) {
@@ -629,8 +1062,10 @@ function injectEvidenceGallery(html, evidencePages = []) {
 }
 
 function findPlaceholderMarkers(html) {
+  const searchable = String(html || '')
+    .replace(/data:[^"')\s>]+/gi, 'data:embedded-asset');
   return [...new Set(
-    [...String(html || '').matchAll(/(?:placeholder|TODO|待补|占位|lorem ipsum)/gi)]
+    [...searchable.matchAll(/(?:placeholder|TODO|待补|占位|lorem ipsum)/gi)]
       .map(match => match[0])
   )];
 }
@@ -690,10 +1125,18 @@ function replaceFigurePlaceholdersWithEvidence(html, evidencePages = []) {
 function inspectHtmlQuality(html, evidencePages = []) {
   const issues = [];
   const placeholderMarkers = findPlaceholderMarkers(html);
+  const missingMarkers = findMissingVisibleHeadings(html);
   if (placeholderMarkers.length > 0) {
     issues.push({
       code: 'placeholder_marker',
       markers: placeholderMarkers
+    });
+  }
+
+  if (missingMarkers.length > 0) {
+    issues.push({
+      code: 'missing_visible_heading',
+      markers: missingMarkers
     });
   }
 
@@ -709,7 +1152,8 @@ function inspectHtmlQuality(html, evidencePages = []) {
   return {
     ok: issues.length === 0,
     issues,
-    placeholderMarkers
+    placeholderMarkers,
+    missingMarkers
   };
 }
 
@@ -1027,13 +1471,14 @@ async function captureValidationScreenshot(page, screenshotPath) {
   }
 }
 
-function runCodexHtmlGeneration({
+async function runCodexHtmlGeneration({
   workingDir,
   targetHtmlPath,
   finalMessagePath,
   promptText,
   attachedPageImages,
-  model = 'gpt-5.4-mini'
+  model = 'gpt-5.4-mini',
+  timeoutMs = 120000
 }) {
   const args = [
     'exec',
@@ -1055,15 +1500,17 @@ function runCodexHtmlGeneration({
   }
   args.push('-');
 
-  const result = spawnSync('codex', args, {
+  const result = await runCommandWithTimeout({
+    command: 'codex',
+    args,
+    cwd: workingDir,
     input: promptText,
-    encoding: 'utf8',
-    maxBuffer: 20 * 1024 * 1024,
-    timeout: 30 * 60 * 1000
+    timeoutMs,
+    maxBuffer: 20 * 1024 * 1024
   });
 
-  if (result.status !== 0) {
-    throw new Error(`codex exec failed (${result.status}): ${result.stderr || result.stdout}`);
+  if (result.code !== 0) {
+    throw new Error(`codex exec failed (${result.code}${result.signal ? `, signal=${result.signal}` : ''}): ${result.stderr || result.stdout}`);
   }
 
   const rawFinalMessage = fs.existsSync(finalMessagePath) ? fs.readFileSync(finalMessagePath, 'utf8') : '';
@@ -1142,8 +1589,7 @@ async function validateHtmlWithBrowser({ htmlPath, screenshotPath, evidencePages
 
     const title = await page.title();
     const headingTexts = await page.$$eval('h1, h2, h3', nodes => nodes.map(node => node.textContent || ''));
-    const requiredMarkers = ['研究动机', '实验', '结果', '评论'];
-    const missingMarkers = requiredMarkers.filter(marker => !headingTexts.some(text => text.includes(marker)));
+    const missingMarkers = REQUIRED_VISIBLE_HEADINGS.filter(marker => !headingTexts.some(text => text.includes(marker)));
 
     return {
       ok: consoleErrors.length === 0
@@ -1175,6 +1621,7 @@ async function validateHtmlWithBrowser({ htmlPath, screenshotPath, evidencePages
 
 module.exports = {
   buildCodexHtmlPrompt,
+  buildDeterministicFallbackHtml,
   buildHtmlEnhancementPrompt,
   buildCodexInlineHtmlPrompt,
   buildHtmlRepairPrompt,

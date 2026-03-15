@@ -60,7 +60,8 @@ async function requestChatOnce({
   model,
   promptText,
   attachedPageImages = [],
-  temperature = 0
+  temperature = 0,
+  timeoutMs = 60000
 }) {
   const content = [
     { type: 'text', text: promptText },
@@ -72,23 +73,32 @@ async function requestChatOnce({
     }))
   ];
 
-  const response = await fetch(apiBaseUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: 'user',
-          content
-        }
-      ],
-      temperature
-    })
-  });
+  let response;
+  try {
+    response = await fetch(apiBaseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content
+          }
+        ],
+        temperature
+      }),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+      throw new Error(`chat completion timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  }
 
   const raw = await response.text();
   if (!response.ok) {
@@ -113,7 +123,8 @@ async function generateTextWithFallbacks({
   promptText,
   attachedPageImages = [],
   rateLimiter,
-  maxAttemptsPerModel = 2
+  maxAttemptsPerModel = 2,
+  timeoutMs = 60000
 }) {
   const failures = [];
 
@@ -126,7 +137,8 @@ async function generateTextWithFallbacks({
           apiKey,
           model,
           promptText,
-          attachedPageImages
+          attachedPageImages,
+          timeoutMs
         });
         return {
           ...result,

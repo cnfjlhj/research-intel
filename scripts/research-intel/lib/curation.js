@@ -585,7 +585,8 @@ async function curateDailySelection({
   apiBaseUrl = '',
   apiKey = '',
   models = [],
-  rateLimiter = null
+  rateLimiter = null,
+  timeoutMs = 60000
 }) {
   const fallback = fallbackCurateSelection({
     papers,
@@ -611,7 +612,8 @@ async function curateDailySelection({
       models,
       promptText,
       rateLimiter,
-      maxAttemptsPerModel: 1
+      maxAttemptsPerModel: 1,
+      timeoutMs
     });
     const parsed = extractJsonObject(run.content);
     if (!parsed) {

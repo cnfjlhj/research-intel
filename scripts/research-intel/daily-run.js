@@ -13,6 +13,7 @@ const { applyDailyCuration, curateDailySelection } = require('./lib/curation');
 const {
   buildEvidenceManifest,
   buildCodexInlineHtmlPrompt,
+  buildDeterministicFallbackHtml,
   buildHtmlEnhancementPrompt,
   buildHtmlRepairPrompt,
   cleanHtmlResponse,
@@ -55,6 +56,7 @@ const {
 } = require('./lib/render');
 const { sendTelegramDocument } = require('./lib/telegram');
 const { resolveHtmlTemplateReference } = require('./lib/template');
+const { resolveCodexEnhancementConfig } = require('./lib/codex-enhancement-config');
 
 const ROOT_DIR = path.join(__dirname, '../..');
 const DEFAULT_PROFILE_DIR = path.join(ROOT_DIR, 'work/research-intel/profile');
@@ -572,6 +574,58 @@ function normalizeHtmlForAudit(html) {
     .trim();
 }
 
+async function applyDeterministicFallbackArtifact({
+  paper,
+  meta,
+  openreviewSummary,
+  paperTextPreview,
+  webCoverage,
+  htmlPath,
+  fallbackHtmlPath,
+  metadataPath,
+  screenshotPath,
+  evidencePages,
+  reason,
+  makeStandalone = false
+}) {
+  const fallbackHtml = buildDeterministicFallbackHtml({
+    meta,
+    openreviewSummary,
+    paperTextPreview,
+    webCoverage
+  });
+
+  writeText(fallbackHtmlPath, `${fallbackHtml}\n`);
+  writeText(
+    htmlPath,
+    `${injectEvidenceGallery(replaceFigurePlaceholdersWithEvidence(fallbackHtml, evidencePages), evidencePages)}\n`
+  );
+
+  if (makeStandalone) {
+    await makeHtmlStandalone(htmlPath);
+  }
+
+  const validation = await validateHtmlWithBrowser({
+    htmlPath,
+    screenshotPath,
+    evidencePages
+  });
+
+  const metadata = {
+    used: true,
+    ok: validation.ok,
+    paperTitle: paper.title,
+    reason,
+    makeStandalone,
+    fallbackHtmlPath,
+    screenshotPath,
+    validation
+  };
+  writeJson(metadataPath, metadata);
+
+  return metadata;
+}
+
 async function fetchCandidates(profile, maxResultsPerQuery) {
   const queries = buildSearchQueries(profile);
   const results = await Promise.all(
@@ -618,10 +672,15 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
   const webCoverageMarkdownPath = path.join(paperDir, 'web_coverage.md');
   const htmlPath = path.join(paperDir, 'index.html');
   const initialHtmlPath = path.join(paperDir, 'index.initial.html');
+  const fallbackHtmlPath = path.join(paperDir, 'index.deterministic-fallback.html');
   const htmlValidationPath = path.join(paperDir, 'html_validation.json');
   const htmlValidationScreenshotPath = path.join(paperDir, 'html_validation.png');
   const standaloneValidationPath = path.join(paperDir, 'standalone_validation.json');
   const standaloneValidationScreenshotPath = path.join(paperDir, 'standalone_validation.png');
+  const fallbackValidationMetaPath = path.join(paperDir, 'deterministic_fallback.validation.json');
+  const fallbackValidationScreenshotPath = path.join(paperDir, 'deterministic_fallback.validation.png');
+  const fallbackStandaloneMetaPath = path.join(paperDir, 'deterministic_fallback.standalone.json');
+  const fallbackStandaloneScreenshotPath = path.join(paperDir, 'deterministic_fallback.standalone.png');
   const evidencePagesPath = path.join(paperDir, 'evidence_pages.json');
   const paperCardPath = path.join(paperDir, 'paper_card.json');
   const repairDir = path.join(paperDir, 'repair');
@@ -702,7 +761,8 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     models: options.htmlModels,
     promptText,
     attachedPageImages,
-    rateLimiter: options.rateLimiter
+    rateLimiter: options.rateLimiter,
+    timeoutMs: options.chatTimeoutMs
   });
   const cleanedHtml = cleanHtmlResponse(htmlRun.content);
   writeText(finalMessagePath, `${htmlRun.content}\n`);
@@ -715,55 +775,71 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
 
   let codexEnhancement = {
     ok: false,
+    enabled: options.codexHtmlEnhancementEnabled,
     model: options.codexHtmlModel,
     error: ''
   };
-  try {
-    const htmlBeforeEnhancement = fs.readFileSync(htmlPath, 'utf8');
-    const qualityBeforeEnhancement = inspectHtmlQuality(htmlBeforeEnhancement, evidencePages);
-    const codexEvidenceImages = attachedPageImages;
-    const enhancementPrompt = buildHtmlEnhancementPrompt({
-      currentHtml: htmlBeforeEnhancement,
-      paperMetaJson: fs.readFileSync(paperMetaPath, 'utf8'),
-      paperTextPreview: truncateForLlm(fs.readFileSync(paperTextPath, 'utf8'), 22000),
-      openreviewSummary: fs.readFileSync(openreviewSummaryPath, 'utf8'),
-      webCoverageJson: fs.readFileSync(webCoveragePath, 'utf8'),
-      evidenceManifestJson: fs.readFileSync(evidencePagesPath, 'utf8')
-    });
-    writeText(enhancementPromptPath, `${enhancementPrompt}\n`);
-    const enhancementRun = runCodexHtmlGeneration({
-      workingDir: paperDir,
-      targetHtmlPath: htmlPath,
-      finalMessagePath: enhancementMessagePath,
-      promptText: enhancementPrompt,
-      attachedPageImages: codexEvidenceImages,
-      model: options.codexHtmlModel
-    });
-    writeText(enhancementStdoutPath, `${enhancementRun.stdout || ''}\n`);
-    writeText(enhancementStderrPath, `${enhancementRun.stderr || ''}\n`);
-    const htmlAfterEnhancement = fs.readFileSync(htmlPath, 'utf8');
-    const qualityAfterEnhancement = inspectHtmlQuality(htmlAfterEnhancement, evidencePages);
-    const changed = normalizeHtmlForAudit(htmlAfterEnhancement) !== normalizeHtmlForAudit(htmlBeforeEnhancement);
-    codexEnhancement = {
-      ok: true,
-      model: options.codexHtmlModel,
-      changed,
-      attachedImageCount: codexEvidenceImages.length,
-      finalMessagePath: enhancementMessagePath,
-      promptPath: enhancementPromptPath,
-      stdoutPath: enhancementStdoutPath,
-      stderrPath: enhancementStderrPath,
-      qualityBefore: qualityBeforeEnhancement,
-      qualityAfter: qualityAfterEnhancement
-    };
-  } catch (error) {
-    writeText(enhancementStderrPath, `${error.stack || error.message}\n`);
+  if (!options.codexHtmlEnhancementEnabled) {
     codexEnhancement = {
       ok: false,
-      model: options.codexHtmlModel,
-      attachedImageCount: attachedPageImages.length,
-      error: error.message
+      enabled: false,
+      model: '',
+      skipped: true,
+      reason: 'disabled'
     };
+  } else {
+    try {
+      const htmlBeforeEnhancement = fs.readFileSync(htmlPath, 'utf8');
+      const qualityBeforeEnhancement = inspectHtmlQuality(htmlBeforeEnhancement, evidencePages);
+      const codexEvidenceImages = attachedPageImages;
+      const enhancementPrompt = buildHtmlEnhancementPrompt({
+        currentHtml: htmlBeforeEnhancement,
+        paperMetaJson: fs.readFileSync(paperMetaPath, 'utf8'),
+        paperTextPreview: truncateForLlm(fs.readFileSync(paperTextPath, 'utf8'), 22000),
+        openreviewSummary: fs.readFileSync(openreviewSummaryPath, 'utf8'),
+        webCoverageJson: fs.readFileSync(webCoveragePath, 'utf8'),
+        evidenceManifestJson: fs.readFileSync(evidencePagesPath, 'utf8')
+      });
+      writeText(enhancementPromptPath, `${enhancementPrompt}\n`);
+      const enhancementRun = await runCodexHtmlGeneration({
+        workingDir: paperDir,
+        targetHtmlPath: htmlPath,
+        finalMessagePath: enhancementMessagePath,
+        promptText: enhancementPrompt,
+        attachedPageImages: codexEvidenceImages,
+        model: options.codexHtmlModel,
+        timeoutMs: options.codexHtmlTimeoutMs
+      });
+      writeText(enhancementStdoutPath, `${enhancementRun.stdout || ''}\n`);
+      writeText(enhancementStderrPath, `${enhancementRun.stderr || ''}\n`);
+      const htmlAfterEnhancement = fs.readFileSync(htmlPath, 'utf8');
+      const qualityAfterEnhancement = inspectHtmlQuality(htmlAfterEnhancement, evidencePages);
+      const changed = normalizeHtmlForAudit(htmlAfterEnhancement) !== normalizeHtmlForAudit(htmlBeforeEnhancement);
+      codexEnhancement = {
+        ok: true,
+        enabled: true,
+        model: options.codexHtmlModel,
+        timeoutMs: options.codexHtmlTimeoutMs,
+        changed,
+        attachedImageCount: codexEvidenceImages.length,
+        finalMessagePath: enhancementMessagePath,
+        promptPath: enhancementPromptPath,
+        stdoutPath: enhancementStdoutPath,
+        stderrPath: enhancementStderrPath,
+        qualityBefore: qualityBeforeEnhancement,
+        qualityAfter: qualityAfterEnhancement
+      };
+    } catch (error) {
+      writeText(enhancementStderrPath, `${error.stack || error.message}\n`);
+      codexEnhancement = {
+        ok: false,
+        enabled: true,
+        model: options.codexHtmlModel,
+        timeoutMs: options.codexHtmlTimeoutMs,
+        attachedImageCount: attachedPageImages.length,
+        error: error.message
+      };
+    }
   }
   writeJson(enhancementMetaPath, codexEnhancement);
   writeText(
@@ -777,6 +853,7 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     evidencePages
   });
   const repairAttempts = [];
+  let validationFallback = null;
 
   if (!htmlValidation.ok) {
     ensureDir(repairDir);
@@ -802,7 +879,8 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
         promptText: repairPrompt,
         attachedPageImages,
         rateLimiter: options.rateLimiter,
-        maxAttemptsPerModel: 1
+        maxAttemptsPerModel: 1,
+        timeoutMs: options.chatTimeoutMs
       });
       const repairedHtml = cleanHtmlResponse(repairRun.content);
       writeText(repairResponsePath, `${repairRun.content}\n`);
@@ -835,9 +913,27 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     }
   }
 
+  if (!htmlValidation.ok) {
+    validationFallback = await applyDeterministicFallbackArtifact({
+      paper,
+      meta,
+      openreviewSummary,
+      paperTextPreview: fs.readFileSync(paperTextPreviewPath, 'utf8'),
+      webCoverage,
+      htmlPath,
+      fallbackHtmlPath,
+      metadataPath: fallbackValidationMetaPath,
+      screenshotPath: fallbackValidationScreenshotPath,
+      evidencePages,
+      reason: 'html validation failed after model repair attempts'
+    });
+    htmlValidation = validationFallback.validation;
+  }
+
   writeJson(htmlValidationPath, {
     ...htmlValidation,
-    repairAttempts
+    repairAttempts,
+    deterministicFallback: validationFallback
   });
 
   if (!htmlValidation.ok) {
@@ -845,12 +941,33 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
   }
 
   await makeHtmlStandalone(htmlPath);
-  const standaloneValidation = await validateHtmlWithBrowser({
+  let standaloneValidation = await validateHtmlWithBrowser({
     htmlPath,
     screenshotPath: standaloneValidationScreenshotPath,
     evidencePages
   });
-  writeJson(standaloneValidationPath, standaloneValidation);
+  let standaloneFallback = null;
+  if (!standaloneValidation.ok) {
+    standaloneFallback = await applyDeterministicFallbackArtifact({
+      paper,
+      meta,
+      openreviewSummary,
+      paperTextPreview: fs.readFileSync(paperTextPreviewPath, 'utf8'),
+      webCoverage,
+      htmlPath,
+      fallbackHtmlPath,
+      metadataPath: fallbackStandaloneMetaPath,
+      screenshotPath: fallbackStandaloneScreenshotPath,
+      evidencePages,
+      reason: 'standalone html validation failed after inlining local assets',
+      makeStandalone: true
+    });
+    standaloneValidation = standaloneFallback.validation;
+  }
+  writeJson(standaloneValidationPath, {
+    ...standaloneValidation,
+    deterministicFallback: standaloneFallback
+  });
   if (!standaloneValidation.ok) {
     throw new Error(`Standalone HTML validation failed for ${paper.title}: ${JSON.stringify(standaloneValidation)}`);
   }
@@ -888,7 +1005,11 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     standaloneValidationPath,
     webCoverage,
     webCoveragePath,
-    webCoverageMarkdownPath
+    webCoverageMarkdownPath,
+    deterministicFallback: {
+      htmlValidation: validationFallback,
+      standaloneValidation: standaloneFallback
+    }
   };
 }
 
@@ -943,7 +1064,14 @@ async function main() {
     .split(',')
     .map(item => item.trim())
     .filter(Boolean);
-  options.codexHtmlModel = process.env.RESEARCH_INTEL_CODEX_HTML_MODEL || 'gpt-5.4-mini';
+  const configuredChatTimeoutMs = Number(process.env.RESEARCH_INTEL_CHAT_TIMEOUT_MS || '60000');
+  options.chatTimeoutMs = Number.isFinite(configuredChatTimeoutMs) && configuredChatTimeoutMs > 0
+    ? configuredChatTimeoutMs
+    : 60000;
+  const codexEnhancementConfig = resolveCodexEnhancementConfig(process.env);
+  options.codexHtmlEnhancementEnabled = codexEnhancementConfig.enabled;
+  options.codexHtmlModel = codexEnhancementConfig.model;
+  options.codexHtmlTimeoutMs = codexEnhancementConfig.timeoutMs;
   options.rateLimiter = new MinuteRateLimiter(Number(process.env.RESEARCH_INTEL_RATE_LIMIT_PER_MINUTE || '5'));
   options.htmlTemplate = resolveHtmlTemplateReference({
     rootDir: ROOT_DIR,
@@ -1058,7 +1186,8 @@ async function main() {
     apiBaseUrl: options.htmlApiBaseUrl,
     apiKey: options.htmlApiKey,
     models: options.curationModels,
-    rateLimiter: options.rateLimiter
+    rateLimiter: options.rateLimiter,
+    timeoutMs: options.chatTimeoutMs
   });
   const curatedArtifactPapers = applyDailyCuration(artifactPapers, dailyCuration, taxonomy)
     .slice(0, targetPaperCount);

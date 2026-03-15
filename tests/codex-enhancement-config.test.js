@@ -1,0 +1,38 @@
+#!/usr/bin/env node
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const {
+  DEFAULT_CODEX_HTML_TIMEOUT_MS,
+  resolveCodexEnhancementConfig
+} = require('../scripts/research-intel/lib/codex-enhancement-config');
+
+test('resolveCodexEnhancementConfig disables enhancement when model is missing', () => {
+  const config = resolveCodexEnhancementConfig({});
+
+  assert.equal(config.enabled, false);
+  assert.equal(config.model, '');
+  assert.equal(config.timeoutMs, DEFAULT_CODEX_HTML_TIMEOUT_MS);
+});
+
+test('resolveCodexEnhancementConfig trims model and accepts a valid timeout override', () => {
+  const config = resolveCodexEnhancementConfig({
+    RESEARCH_INTEL_CODEX_HTML_MODEL: ' gpt-5.4-mini ',
+    RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS: '45000'
+  });
+
+  assert.equal(config.enabled, true);
+  assert.equal(config.model, 'gpt-5.4-mini');
+  assert.equal(config.timeoutMs, 45000);
+});
+
+test('resolveCodexEnhancementConfig falls back to the default timeout for invalid values', () => {
+  const config = resolveCodexEnhancementConfig({
+    RESEARCH_INTEL_CODEX_HTML_MODEL: 'gpt-5.4-mini',
+    RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS: '0'
+  });
+
+  assert.equal(config.enabled, true);
+  assert.equal(config.timeoutMs, DEFAULT_CODEX_HTML_TIMEOUT_MS);
+});

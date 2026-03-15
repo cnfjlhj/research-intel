@@ -12,6 +12,8 @@ const {
   buildCodexInlineHtmlPrompt,
   buildHtmlRepairPrompt,
   buildEvidenceManifest,
+  buildDeterministicFallbackHtml,
+  findPlaceholderMarkers,
   inspectHtmlQuality,
   captureValidationScreenshot,
   chooseEvidencePages,
@@ -167,6 +169,42 @@ test('buildEvidenceManifest annotates evidence pages with roles, tags, and compa
   assert.equal(manifest[1].pageRole, 'appendix_or_setup');
   assert.ok(manifest[1].signalTags.includes('appendix'));
   assert.ok(manifest[1].signalTags.includes('hyperparameter'));
+});
+
+test('buildDeterministicFallbackHtml produces a validation-safe page without placeholder markers', () => {
+  const html = buildDeterministicFallbackHtml({
+    meta: {
+      title: 'SPIRAL',
+      summary: 'A closed-loop reflective planning framework for long-horizon action world models.',
+      authors: ['Alice', 'Bob'],
+      published: '2026-03-09T14:00:36Z',
+      arxiv: {
+        id: '2603.08403'
+      }
+    },
+    openreviewSummary: 'OpenReview 暂无公开 rebuttal，但作者强调 closed-loop planning 与 critic feedback 的必要性。',
+    paperTextPreview: 'Method: plan, act, reflect, and update memory. Experiments: benchmark results improve semantic alignment.',
+    webCoverage: {
+      chineseBlogs: [
+        { title: '中文长文解读' }
+      ],
+      codeRepos: [
+        { name: 'spiral-repo' }
+      ]
+    }
+  });
+
+  assert.match(html, /研究动机/);
+  assert.match(html, /数学表示及建模/);
+  assert.match(html, /实验方法与实验设计/);
+  assert.match(html, /实验结果及核心结论/);
+  assert.match(html, /评论/);
+  assert.match(html, /One More Thing/);
+  assert.doesNotMatch(html, /todo|placeholder/i);
+
+  const quality = inspectHtmlQuality(html, []);
+  assert.equal(quality.placeholderMarkers.length, 0);
+  assert.deepEqual(quality.missingMarkers, []);
 });
 
 test('cleanHtmlResponse strips code fences and leading chatter', () => {
@@ -392,6 +430,19 @@ test('inspectHtmlQuality flags placeholder figures and weak evidence grounding',
   assert.equal(report.ok, false);
   assert.ok(report.issues.some(issue => issue.code === 'placeholder_marker'));
   assert.ok(report.issues.some(issue => issue.code === 'weak_figure_grounding'));
+});
+
+test('findPlaceholderMarkers ignores todo-like substrings inside embedded data urls', () => {
+  const html = [
+    '<!DOCTYPE html>',
+    '<html><body>',
+    '<h2>研究动机</h2>',
+    '<img src="data:image/png;base64,AAAATodOAAAA">',
+    '<p>正文没有脏标记。</p>',
+    '</body></html>'
+  ].join('');
+
+  assert.deepEqual(findPlaceholderMarkers(html), []);
 });
 
 test('resolveBrowserExecutablePath prefers explicit env override and known system browser paths', () => {
