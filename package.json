@@ -1,0 +1,51 @@
+{
+  "name": "research-intel",
+  "version": "0.1.0",
+  "description": "面向个人研究者的自托管论文情报系统：每日推送、单篇 HTML 档案、长期方法账本与 Web 控制台。",
+  "main": "scripts/research-intel/web-server.js",
+  "scripts": {
+    "start": "node scripts/research-intel/web-server.js",
+    "daily": "node scripts/research-intel/daily-run.js",
+    "daily:no-telegram": "node scripts/research-intel/daily-run.js --no-telegram",
+    "worker": "node scripts/research-intel/codex-supervisor.js",
+    "verify": "node scripts/research-intel/verify-daily.js --resend-missing",
+    "scheduler": "node scripts/research-intel/scheduler-loop.js",
+    "web": "node scripts/research-intel/web-server.js",
+    "web:start": "bash scripts/research-intel/start-web.sh",
+    "web:stop": "bash scripts/research-intel/stop-web.sh",
+    "web:status": "bash scripts/research-intel/status-web.sh",
+    "cron:install": "bash scripts/research-intel/install-cron.sh",
+    "profile:init": "node scripts/bootstrap/init-profile.js",
+    "profile:example": "node scripts/bootstrap/init-profile.js --use-example",
+    "test": "node --test tests/*.js"
+  },
+  "keywords": [
+    "research-intelligence",
+    "paper-digest",
+    "telegram-bot",
+    "arxiv",
+    "openreview",
+    "self-hosted",
+    "research-workflow"
+  ],
+  "author": "cnfjlhj",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cnfjlhj/research-intel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cnfjlhj/research-intel/issues"
+  },
+  "homepage": "https://github.com/cnfjlhj/research-intel#readme",
+  "dependencies": {
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.1",
+    "express": "^4.18.2",
+    "form-data": "^4.0.4",
+    "puppeteer-core": "^24.29.0"
+  }
+}

@@ -1,0 +1,66 @@
+services:
+  web:
+    build: .
+    env_file:
+      - .env
+    command: ["node", "scripts/research-intel/web-server.js"]
+    ports:
+      - "${RESEARCH_INTEL_WEB_PORT:-3086}:${RESEARCH_INTEL_WEB_PORT:-3086}"
+    volumes:
+      - ./work:/app/work
+      - ./research-intel-records:/app/research-intel-records
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    env_file:
+      - .env
+    command: ["node", "scripts/research-intel/scheduler-loop.js"]
+    volumes:
+      - ./work:/app/work
+      - ./research-intel-records:/app/research-intel-records
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  daily:
+    build: .
+    env_file:
+      - .env
+    command: ["node", "scripts/research-intel/daily-run.js"]
+    volumes:
+      - ./work:/app/work
+      - ./research-intel-records:/app/research-intel-records
+      - ./logs:/app/logs
+
+  daily-no-telegram:
+    build: .
+    env_file:
+      - .env
+    command: ["node", "scripts/research-intel/daily-run.js", "--no-telegram"]
+    volumes:
+      - ./work:/app/work
+      - ./research-intel-records:/app/research-intel-records
+      - ./logs:/app/logs
+
+  init-profile:
+    build: .
+    env_file:
+      - .env
+    command: ["node", "scripts/bootstrap/init-profile.js"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./work:/app/work
+      - ./research-intel-records:/app/research-intel-records
+      - ./logs:/app/logs
+
+  profile-example:
+    build: .
+    env_file:
+      - .env
+    command: ["node", "scripts/bootstrap/init-profile.js", "--use-example"]
+    volumes:
+      - ./work:/app/work
+      - ./research-intel-records:/app/research-intel-records
+      - ./logs:/app/logs

@@ -1,0 +1,5 @@
+{"title":"ReAct: Synergizing Reasoning and Acting in Language Models","status":"read","anchor":true,"liked":true,"branchId":"tool-use-and-feedback","notes":"作为工具调用与环境反馈的锚点，重点看 reasoning trace 和 action trace 如何协同。"}
+{"title":"Self-Refine: Iterative Refinement with Self-Feedback","status":"read","anchor":true,"liked":true,"branchId":"reflection-and-verification","notes":"作为自我修正主线锚点，重点看 self-feedback 是否真的形成了稳定改进回路。"}
+{"title":"Reflexion: Language Agents with Verbal Reinforcement Learning","status":"read","anchor":true,"liked":true,"branchId":"reflection-and-verification","notes":"重点看 verbal feedback 与 episodic memory 如何影响后续决策。"}
+{"title":"Voyager: An Open-Ended Embodied Agent with Large Language Models","status":"read","anchor":true,"liked":true,"branchId":"planning-and-long-horizon-tasks","notes":"作为长程任务与技能积累的锚点，重点看 agent 如何跨任务保留和复用经验。"}
+{"title":"Toolformer: Language Models Can Teach Themselves to Use Tools","status":"read","anchor":true,"liked":true,"branchId":"tool-use-and-feedback","notes":"重点看工具使用能力如何被注入，以及工具选择是否带来可迁移收益。"}

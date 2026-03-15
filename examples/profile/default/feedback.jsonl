@@ -1,0 +1,6 @@
+{"title":"Prefer explicit tool feedback loops","status":"read","anchor":false,"liked":true,"notes":"优先选择明确展示 agent 如何接收环境反馈、解析结果并形成下一步动作的论文。"}
+{"title":"Prefer reusable agent components","status":"read","anchor":false,"liked":true,"notes":"更偏好能拆出 planning、memory、reflection、verification 等可复用组件的论文。"}
+{"title":"Prefer grounded evaluation","status":"read","anchor":false,"liked":true,"notes":"如果论文给出了失败案例、ablation、真实环境反馈或轨迹分析，应明显加权。"}
+{"title":"Prefer long-horizon task evidence","status":"read","anchor":false,"liked":true,"notes":"对长程任务、工具链或外部知识接入有实证的论文优先级更高。"}
+{"title":"Avoid benchmark-only prompt tweaks","status":"archived","anchor":false,"liked":false,"notes":"如果论文只是 prompt 微调带来榜单小幅提升，但没有方法沉淀，就降权。"}
+{"title":"Avoid application papers without transferable methods","status":"archived","anchor":false,"liked":false,"notes":"如果论文只换场景、没有可迁移设计，就不要让它挤占主线推荐。"}

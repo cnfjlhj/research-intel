@@ -1,0 +1,29 @@
+{
+  "root_title": "Tool-Using LLM Agents",
+  "branches": [
+    {
+      "id": "tool-use-and-feedback",
+      "title": "工具调用与环境反馈",
+      "question": "论文如何把外部工具、执行结果和下一步动作闭合成稳定回路？",
+      "keywords": []
+    },
+    {
+      "id": "memory-and-context",
+      "title": "记忆与上下文管理",
+      "question": "论文如何保留长期信息、筛选经验，并避免上下文只会越堆越乱？",
+      "keywords": []
+    },
+    {
+      "id": "reflection-and-verification",
+      "title": "反思、验证与自我纠错",
+      "question": "论文如何让 agent 发现自己的错误、验证输出，并把反馈用于下一轮决策？",
+      "keywords": []
+    },
+    {
+      "id": "planning-and-long-horizon-tasks",
+      "title": "规划与长程任务",
+      "question": "论文如何把复杂目标拆成稳定子任务，并在长链路中维持方向感？",
+      "keywords": []
+    }
+  ]
+}
