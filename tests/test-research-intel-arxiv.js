@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {
   buildPdfCandidateUrls,
   buildSearchQueries,
+  fetchArxivEntriesByIds,
   parseArxivFeed
 } = require('../scripts/research-intel/lib/arxiv');
 
@@ -192,4 +193,37 @@ test('buildSearchQueries avoids standalone weak efficiency signals but still kee
   assert.equal(queries.includes('all:"experience sharing"'), false);
   assert.ok(queries.includes('all:"self-evolving agents" AND all:"sample efficiency"'));
   assert.ok(queries.includes('all:"self-evolving agents" AND all:"experience sharing"'));
+});
+
+test('fetchArxivEntriesByIds uses id_list and de-duplicates repeated ids', async () => {
+  const originalFetch = global.fetch;
+  const seenUrls = [];
+  global.fetch = async url => {
+    seenUrls.push(String(url));
+    return {
+      ok: true,
+      text: async () => `<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <id>http://arxiv.org/abs/2603.12345v1</id>
+            <title>Imported Paper</title>
+            <summary>Imported summary.</summary>
+            <published>2026-03-12T00:00:00Z</published>
+            <updated>2026-03-12T00:00:00Z</updated>
+            <author><name>Test Author</name></author>
+            <link href="https://arxiv.org/pdf/2603.12345v1" rel="related" type="application/pdf" title="pdf"/>
+          </entry>
+        </feed>`
+    };
+  };
+
+  try {
+    const papers = await fetchArxivEntriesByIds(['2603.12345', '2603.12345', '2603.99999']);
+    assert.equal(seenUrls.length, 1);
+    assert.match(seenUrls[0], /id_list=2603\.12345%2C2603\.99999/);
+    assert.equal(papers.length, 1);
+    assert.equal(papers[0].arxivId, '2603.12345');
+  } finally {
+    global.fetch = originalFetch;
+  }
 });

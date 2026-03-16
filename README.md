@@ -22,6 +22,10 @@
 - 文件即记忆
   - `research_brief.md`、`seed_papers.jsonl`、`feedback.jsonl`、`method_tree_notes.md` 都是可编辑文件
   - 不依赖黑盒数据库才能理解系统状态
+- Web 首用向导与论文导入
+  - `编辑区` 内置“首次使用 / 研究画像向导”
+  - 支持把单篇或批量 arXiv 论文直接导入 `seed_papers.jsonl`
+  - 导入后可直接触发一次今日运行，让显式导入论文进入 HTML 主链路
 - 长期方法账本
   - 每天日报之外，还会持续维护 `method_tree.md/json`
   - 让研究主线越来越清晰，而不是每天看完就散掉
@@ -138,6 +142,18 @@ cp .env.example .env
 
 生成结果会写入 `work/research-intel/profile/`。
 
+如果你更喜欢 Web 首次填写，而不是在终端里逐题回答：
+
+1. 先启动 Web 控制台
+   ```bash
+   npm run web:start
+   ```
+2. 打开 `http://127.0.0.1:3086/research-intel/`
+3. 登录后进入 `编辑区`
+4. 先填写 `首次使用 / 研究画像向导`
+5. 如果你手上已经有感兴趣论文，再用 `论文导入 / 批量种子录入` 补进去
+6. 勾选“保存后立即触发一次今日运行”，或稍后手动执行 `npm run daily:no-telegram`
+
 仓库里的 `examples/profile/default/` 只是一个公开演示样例，用来展示画像文件长什么样，不会自动覆盖你的真实运行画像。
 如果你手动执行 `npm run profile:example`，它会把示例画像写入 `work/research-intel/profile/`，因此更适合第一次试跑或空白环境。
 
@@ -182,29 +198,21 @@ http://127.0.0.1:3086/research-intel/
   docker compose up -d scheduler
   ```
 
-## 默认运行模式与高级模式
+## 默认运行模式
 
-`Research Intel` 有两种执行模式：
+默认稳定路径是 `codex`：
 
-- `codex`
-  - 通过 `codex-supervisor.js` 启动 tmux worker、心跳监控、恢复路径
-  - 默认推荐模式
-- `direct`
-  - 直接执行 `daily-run.js`
-  - 作为降级和调试路径保留
-  - 如果 `.env` 里留空 `RESEARCH_INTEL_CODEX_HTML_MODEL`，会跳过 Codex HTML 强化
+- 通过 `codex-supervisor.js` 启动 tmux worker、心跳监控和恢复逻辑
+- 这是文档默认假设的运行方式
+- 如果你没有特别的调试需求，不需要切别的模式
 
-通过 `.env` 里的 `RESEARCH_INTEL_RUN_MODE` 切换：
+通过 `.env` 里的 `RESEARCH_INTEL_RUN_MODE` 保持默认值：
 
 ```env
 RESEARCH_INTEL_RUN_MODE=codex
 ```
 
-如果你明确不想走 Codex worker，再手动改成：
-
-```env
-RESEARCH_INTEL_RUN_MODE=direct
-```
+`direct` 仍然保留在代码里作为内部调试/降级路径，但不作为公开默认工作流。
 
 ## Docker Compose
 
@@ -245,10 +253,12 @@ npm run cron:install
 
 - `work/research-intel/profile/`
   - 你的画像文件、锚点论文和长期偏好入口
+  - Web 导入的单篇/批量论文也会沉淀到这里的 `seed_papers.jsonl`
 - `research-intel-records/daily/<date>/`
   - 当天的 brief、reading order、method tree 和单篇 HTML 档案
 - `http://127.0.0.1:3086/research-intel/`
   - 登录后的 Web 控制台，可查看历史日报、知识账本和运行状态
+  - `编辑区` 可继续修改研究画像、导入论文、再触发一轮运行
 
 如果当天链路已经跑完，但发现有漏发或想做补发验证，可以执行：
 

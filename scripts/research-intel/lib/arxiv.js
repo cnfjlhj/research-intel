@@ -221,6 +221,32 @@ async function fetchArxivQuery(query, maxResults = 12) {
   return parseArxivFeed(await response.text());
 }
 
+async function fetchArxivEntriesByIds(arxivIds = []) {
+  const uniqueIds = [...new Set(
+    (arxivIds || [])
+      .map(id => normalizeArxivId(id))
+      .filter(Boolean)
+  )];
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+
+  const url = new URL('https://export.arxiv.org/api/query');
+  url.searchParams.set('id_list', uniqueIds.join(','));
+
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'research-intel-bot/0.1 (+local)'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`arXiv id_list query failed (${response.status}) for ${uniqueIds.join(',')}`);
+  }
+
+  return parseArxivFeed(await response.text());
+}
+
 function buildPdfCandidateUrls(paper) {
   const urls = [];
   const seen = new Set();
@@ -541,6 +567,7 @@ function tokenCount(phrase) {
 module.exports = {
   buildPdfCandidateUrls,
   buildSearchQueries,
+  fetchArxivEntriesByIds,
   fetchArxivQuery,
   parseArxivFeed
 };

@@ -678,3 +678,203 @@ test('research-intel web app upserts seed papers and triggers manual run', async
     await server.close();
   }
 });
+
+test('research-intel web app renders onboarding and import controls on settings page', async () => {
+  const server = await startServer();
+  try {
+    const login = await fetch(`${server.baseUrl}/research-intel/login`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({ password: 'secret-pass' }),
+      redirect: 'manual'
+    });
+    const cookie = extractCookie(login);
+
+    const settings = await fetch(`${server.baseUrl}/research-intel/settings`, {
+      headers: {
+        cookie
+      }
+    });
+    const html = await settings.text();
+    assert.equal(settings.status, 200);
+    assert.match(html, /首次使用 \/ 研究画像向导/);
+    assert.match(html, /论文导入 \/ 批量种子录入/);
+    assert.match(html, /保存后立即触发一次今日运行/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('research-intel web app bootstraps profile from onboarding form and can trigger a run', async () => {
+  const server = await startServer();
+  try {
+    const login = await fetch(`${server.baseUrl}/research-intel/login`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({ password: 'secret-pass' }),
+      redirect: 'manual'
+    });
+    const cookie = extractCookie(login);
+
+    const response = await fetch(`${server.baseUrl}/research-intel/settings/bootstrap`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        timezone: 'Asia/Shanghai',
+        sendTime: '08:30',
+        minPapers: '2',
+        targetPapers: '4',
+        maxPapers: '6',
+        direction: 'ai scientist systems',
+        currentGoal: '先搭好研究画像',
+        focusKeywords: 'ai scientist, verifier loop',
+        positiveSignals: 'verifier loop, memory archive',
+        negativeSignals: 'pure survey, product workflow',
+        readingPreference: '先解释为什么今天看',
+        branchSpecs: '为什么 baseline 不够::需要什么额外机制；什么反馈最有效::哪类 verifier 更有用',
+        seedSpecs: 'Seed Alpha|系统初始化锚点',
+        replaceFeedback: 'on',
+        runAfterSave: 'on'
+      }),
+      redirect: 'manual'
+    });
+
+    assert.equal(response.status, 303);
+    assert.equal(response.headers.get('location'), '/research-intel/settings?saved=bootstrap&triggered=1');
+    assert.equal(server.runInvocations.length, 1);
+
+    const brief = fs.readFileSync(path.join(server.profileDir, 'research_brief.md'), 'utf8');
+    const taxonomy = JSON.parse(fs.readFileSync(path.join(server.profileDir, 'method_taxonomy.json'), 'utf8'));
+    const notes = fs.readFileSync(path.join(server.profileDir, 'method_tree_notes.md'), 'utf8');
+    const seeds = fs.readFileSync(path.join(server.profileDir, 'seed_papers.jsonl'), 'utf8');
+    const feedback = fs.readFileSync(path.join(server.profileDir, 'feedback.jsonl'), 'utf8');
+
+    assert.match(brief, /ai scientist systems/);
+    assert.match(brief, /## Focus Keywords/);
+    assert.equal(taxonomy.root_title, 'ai scientist systems');
+    assert.equal(taxonomy.branches.length, 2);
+    assert.match(notes, /当前长期账本围绕 “ai scientist systems” 展开/);
+    assert.match(seeds, /Seed Alpha/);
+    assert.match(feedback, /Prefer verifier loop/);
+    assert.match(feedback, /Avoid pure survey/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('research-intel web app imports papers into seeds and preserves import metadata across manual edits', async () => {
+  const server = await startServer({
+    resolveImportEntries: async ({ entries, defaults }) => {
+      assert.equal(entries.length, 2);
+      return [
+        {
+          title: 'Imported Paper',
+          status: defaults.status,
+          anchor: defaults.anchor,
+          liked: defaults.liked,
+          branchId: 'open-ended-evolution',
+          notes: 'imported note',
+          arxivId: '2603.12345',
+          absUrl: 'https://arxiv.org/abs/2603.12345',
+          pdfUrl: 'https://arxiv.org/pdf/2603.12345',
+          source: 'arxiv',
+          directImport: true
+        },
+        {
+          title: 'Manual Title Only',
+          status: defaults.status,
+          anchor: false,
+          liked: false,
+          branchId: '',
+          notes: 'title only',
+          source: 'manual',
+          directImport: false
+        }
+      ];
+    }
+  });
+
+  try {
+    const login = await fetch(`${server.baseUrl}/research-intel/login`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({ password: 'secret-pass' }),
+      redirect: 'manual'
+    });
+    const cookie = extractCookie(login);
+
+    const importResponse = await fetch(`${server.baseUrl}/research-intel/settings/imports/save`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        entries: '2603.12345 | imported note\nManual Title Only | title only',
+        status: 'queued',
+        anchor: 'on',
+        liked: 'on',
+        runAfterSave: 'on'
+      }),
+      redirect: 'manual'
+    });
+
+    assert.equal(importResponse.status, 303);
+    assert.equal(importResponse.headers.get('location'), '/research-intel/settings?saved=imports&triggered=1');
+    assert.equal(server.runInvocations.length, 1);
+
+    let seeds = fs.readFileSync(path.join(server.profileDir, 'seed_papers.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line));
+    const imported = seeds.find(item => item.title === 'Imported Paper');
+    assert.ok(imported);
+    assert.equal(imported.arxivId, '2603.12345');
+    assert.equal(imported.branchId, 'open-ended-evolution');
+    assert.equal(imported.directImport, true);
+
+    const saveSeed = await fetch(`${server.baseUrl}/research-intel/settings/seeds/save`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        originalTitle: 'Imported Paper',
+        title: 'Imported Paper',
+        status: 'read',
+        notes: 'updated note'
+      }),
+      redirect: 'manual'
+    });
+
+    assert.equal(saveSeed.status, 303);
+
+    seeds = fs.readFileSync(path.join(server.profileDir, 'seed_papers.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line));
+    const updated = seeds.find(item => item.title === 'Imported Paper');
+    assert.ok(updated);
+    assert.equal(updated.status, 'read');
+    assert.equal(updated.notes, 'updated note');
+    assert.equal(updated.arxivId, '2603.12345');
+    assert.equal(updated.absUrl, 'https://arxiv.org/abs/2603.12345');
+    assert.equal(updated.pdfUrl, 'https://arxiv.org/pdf/2603.12345');
+    assert.equal(updated.branchId, 'open-ended-evolution');
+    assert.equal(updated.directImport, true);
+  } finally {
+    await server.close();
+  }
+});

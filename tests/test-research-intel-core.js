@@ -230,6 +230,33 @@ test('selectPapers does not admit papers based on weak one-token seed overlap al
   );
 });
 
+test('selectPapers keeps explicitly imported seeds even when topic overlap is thin', () => {
+  const profile = parseResearchBrief(SAMPLE_BRIEF);
+  profile.seeds = [
+    {
+      title: 'Mechanistic Protein Search with Reflective Verifiers',
+      arxivId: '2603.12345',
+      directImport: true,
+      status: 'queued',
+      notes: '用户明确要求直接导入并生成单篇结果'
+    }
+  ];
+
+  const candidates = [
+    {
+      title: 'Mechanistic Protein Search with Reflective Verifiers',
+      arxivId: '2603.12345',
+      summary: 'We study reflective verifiers for protein search with automated experiment planning.',
+      published: '2026-03-13T00:00:00Z'
+    }
+  ];
+
+  const selected = selectPapers(candidates, profile, new Date('2026-03-14T00:00:00Z'));
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].title, 'Mechanistic Protein Search with Reflective Verifiers');
+  assert.ok(selected[0].reasons.includes('direct_import'));
+});
+
 test('scorePaper strongly downweights vertical application papers when method evidence is thin', () => {
   const profile = parseResearchBrief(SAMPLE_BRIEF);
   profile.seeds = [

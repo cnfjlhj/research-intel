@@ -31,6 +31,8 @@ function serverUrl(server) {
 }
 
 test('generateTextWithFallbacks falls back to the next model after a timeout', async () => {
+  const timeoutMs = 100;
+  const slowResponseDelayMs = 250;
   const seenModels = [];
   const server = await startJsonServer((payload, res) => {
     seenModels.push(payload.model);
@@ -43,7 +45,7 @@ test('generateTextWithFallbacks falls back to the next model after a timeout', a
         res.end(JSON.stringify({
           choices: [{ message: { content: 'too late' } }]
         }));
-      }, 120);
+      }, slowResponseDelayMs);
       return;
     }
 
@@ -61,7 +63,7 @@ test('generateTextWithFallbacks falls back to the next model after a timeout', a
       promptText: 'hello',
       rateLimiter: new MinuteRateLimiter(1000),
       maxAttemptsPerModel: 1,
-      timeoutMs: 20
+      timeoutMs
     });
 
     assert.equal(result.model, 'fast-model');
@@ -73,6 +75,8 @@ test('generateTextWithFallbacks falls back to the next model after a timeout', a
 });
 
 test('generateTextWithFallbacks reports timeout when every model hangs', async () => {
+  const timeoutMs = 100;
+  const slowResponseDelayMs = 250;
   const server = await startJsonServer((_payload, res) => {
     setTimeout(() => {
       if (res.destroyed) {
@@ -82,7 +86,7 @@ test('generateTextWithFallbacks reports timeout when every model hangs', async (
       res.end(JSON.stringify({
         choices: [{ message: { content: 'too late again' } }]
       }));
-    }, 120);
+    }, slowResponseDelayMs);
   });
 
   try {
@@ -94,9 +98,9 @@ test('generateTextWithFallbacks reports timeout when every model hangs', async (
         promptText: 'hello',
         rateLimiter: new MinuteRateLimiter(1000),
         maxAttemptsPerModel: 1,
-        timeoutMs: 20
+        timeoutMs
       }),
-      /timed out after 20ms/
+      /timed out after 100ms/
     );
   } finally {
     await new Promise(resolve => server.close(resolve));

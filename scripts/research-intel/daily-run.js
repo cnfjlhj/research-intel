@@ -7,7 +7,7 @@ const dotenv = require('dotenv');
 
 dotenv.config({ path: path.join(__dirname, '../../.env'), quiet: true });
 
-const { buildPdfCandidateUrls, buildSearchQueries, fetchArxivQuery } = require('./lib/arxiv');
+const { buildPdfCandidateUrls, buildSearchQueries, fetchArxivEntriesByIds, fetchArxivQuery } = require('./lib/arxiv');
 const { MinuteRateLimiter, generateHtmlWithFallbacks } = require('./lib/chat-html');
 const { applyDailyCuration, curateDailySelection } = require('./lib/curation');
 const {
@@ -26,7 +26,7 @@ const {
   selectEvidencePageImages,
   validateHtmlWithBrowser
 } = require('./lib/codex-html');
-const { normalizeTitle, dedupePapers, scorePaper } = require('./lib/core');
+const { normalizeArxivId, normalizeTitle, dedupePapers, scorePaper } = require('./lib/core');
 const {
   buildDeliveryPlan,
   deliveryReceiptsPath,
@@ -628,6 +628,11 @@ async function applyDeterministicFallbackArtifact({
 
 async function fetchCandidates(profile, maxResultsPerQuery) {
   const queries = buildSearchQueries(profile);
+  const explicitSeedIds = [...new Set(
+    (profile.seeds || [])
+      .map(seed => normalizeArxivId(seed?.arxivId || seed?.absUrl || seed?.pdfUrl || seed?.source || ''))
+      .filter(Boolean)
+  )];
   const results = await Promise.all(
     queries.map(async query => {
       try {
@@ -638,6 +643,22 @@ async function fetchCandidates(profile, maxResultsPerQuery) {
       }
     })
   );
+  if (explicitSeedIds.length > 0) {
+    try {
+      const papers = await fetchArxivEntriesByIds(explicitSeedIds);
+      results.unshift({
+        query: `explicit-seeds:${explicitSeedIds.join(',')}`,
+        papers,
+        error: null
+      });
+    } catch (error) {
+      results.unshift({
+        query: `explicit-seeds:${explicitSeedIds.join(',')}`,
+        papers: [],
+        error: error.message
+      });
+    }
+  }
 
   return {
     queries,

@@ -429,6 +429,31 @@ function findRelatedSeeds(paper, seeds, maxResults = 2) {
     .slice(0, maxResults);
 }
 
+function isDirectImportSeedMatch(paper, seed) {
+  if (!seed?.directImport) {
+    return false;
+  }
+
+  const paperArxivId = normalizeArxivId(paper?.arxivId || paper?.arxiv_id);
+  const seedArxivId = normalizeArxivId(seed?.arxivId);
+  const normalizedPaperTitle = normalizeTitle(paper?.title || '');
+  const normalizedSeedTitle = normalizeTitle(seed?.title || '');
+
+  if (paperArxivId && seedArxivId) {
+    const paperBaseId = paperArxivId.replace(/v\d+$/i, '');
+    const seedBaseId = seedArxivId.replace(/v\d+$/i, '');
+    if (paperBaseId === seedBaseId) {
+      return true;
+    }
+  }
+
+  if (normalizedPaperTitle && normalizedSeedTitle && titleSimilarity(normalizedPaperTitle, normalizedSeedTitle) >= 0.95) {
+    return true;
+  }
+
+  return false;
+}
+
 function scoreFeedbackAlignment(paper, feedback) {
   const feedbackText = [feedback?.title, feedback?.notes].filter(Boolean).join(' ');
   if (!feedbackText) {
@@ -561,6 +586,7 @@ function scorePaper(paper, profile, now = new Date()) {
   }
 
   const relatedSeeds = findRelatedSeeds(paper, profile.seeds || [], 3);
+  const directImportMatch = relatedSeeds.some(seed => isDirectImportSeedMatch(paper, seed));
   const relatedPositiveFeedback = findRelatedFeedback(
     paper,
     (profile.feedback || []).filter(record => record?.liked),
@@ -681,17 +707,19 @@ function scorePaper(paper, profile, now = new Date()) {
       && coreMatchedSignals.length === 0
   ) ? 22 : 0;
   const veryOldPenalty = freshnessDays > 180 ? 26 : 0;
-  const directMethodEvidence = hasDirectMethodEvidence({
+  const inferredDirectMethodEvidence = hasDirectMethodEvidence({
     matchedKeywords: coreMatchedKeywords,
     matchedSignals: coreMatchedSignals,
     actionableMethodScore,
     diagnosticEvidenceScore,
     methodContextScore
   });
+  const directMethodEvidence = inferredDirectMethodEvidence || directImportMatch;
   const indirectAlignmentOnlyPenalty = (
     !directMethodEvidence
       && (relatedSeeds.length > 0 || relatedPositiveFeedback.length > 0)
   ) ? 18 : 0;
+  const directImportBoost = directImportMatch ? 36 : 0;
   const methodEvidenceScore = (
     specificMatchedKeywords.length * 6
       + matchedSignals.length * 6
@@ -713,6 +741,7 @@ function scorePaper(paper, profile, now = new Date()) {
     + feedbackAlignmentScore
     + branchFitScore
     + freshnessScore
+    + directImportBoost
     - negativeSignalPenalty
     - feedbackAvoidPenalty
     - weakThemeOnlyPenalty
@@ -730,6 +759,7 @@ function scorePaper(paper, profile, now = new Date()) {
   if (titleKeywordScore > 0 || abstractKeywordScore > 0) reasons.push('keyword_match');
   if (positiveSignalScore > 0) reasons.push('positive_signal');
   if (seedAlignmentScore > 0) reasons.push('seed_match');
+  if (directImportMatch) reasons.push('direct_import');
   if (feedbackAlignmentScore > 0) reasons.push('feedback_match');
   if (branchFitScore > 0) reasons.push('branch_fit');
   if (freshnessScore > 20) reasons.push('fresh');
@@ -794,6 +824,7 @@ function selectPapers(candidates, profile, now = new Date()) {
       paper => paper.reasons.includes('keyword_match')
         || paper.reasons.includes('positive_signal')
         || paper.reasons.includes('seed_match')
+        || paper.reasons.includes('direct_import')
         || paper.reasons.includes('feedback_match')
     )
     .sort((left, right) => right.score - left.score)

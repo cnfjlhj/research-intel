@@ -7,11 +7,20 @@ const { spawn } = require('child_process');
 
 const express = require('express');
 
-const { normalizeTitle, parseResearchBrief } = require('./core');
+const { normalizeArxivId, normalizeTitle, parseResearchBrief } = require('./core');
+const { fetchArxivEntriesByIds } = require('./arxiv');
 const { summarizeDeliveryStatus } = require('./delivery');
 const { readJsonl } = require('./profile');
 const { buildPaperSlug } = require('./daily');
 const { FINAL_RUN_STATUSES, reconcileCurrentRunWithHeartbeat } = require('./worker');
+const {
+  buildFeedbackRecords,
+  buildMethodTreeNotes,
+  buildResearchBrief,
+  parseBranchSpecs,
+  parseList,
+  parseSeedSpecs
+} = require('../../bootstrap/init-profile');
 
 const APP_BASE_PATH = '/research-intel';
 const SESSION_COOKIE_NAME = 'research_intel_session';
@@ -98,21 +107,127 @@ function boolFromForm(value) {
   return value === 'on' || value === 'true' || value === '1';
 }
 
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number(String(value || '').trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function normalizeRecordTitle(record) {
   return normalizeTitle(record?.title || '');
 }
 
-function upsertJsonlRecord(records, originalTitle, nextRecord) {
+function upsertJsonlRecord(records, originalTitle, nextRecord, options = {}) {
   const originalKey = normalizeTitle(originalTitle || nextRecord.title);
   const nextKey = normalizeRecordTitle(nextRecord);
+  const existingRecord = options.mergeExisting
+    ? records.find(record => normalizeRecordTitle(record) === originalKey || normalizeRecordTitle(record) === nextKey)
+    : null;
+  const finalRecord = existingRecord
+    ? { ...existingRecord, ...nextRecord }
+    : nextRecord;
   const filtered = records.filter(record => normalizeRecordTitle(record) !== originalKey && normalizeRecordTitle(record) !== nextKey);
-  filtered.push(nextRecord);
+  filtered.push(finalRecord);
   return filtered.sort((left, right) => String(left.title || '').localeCompare(String(right.title || ''), 'en', { sensitivity: 'base' }));
 }
 
 function deleteJsonlRecord(records, title) {
   const key = normalizeTitle(title);
   return records.filter(record => normalizeRecordTitle(record) !== key);
+}
+
+function normalizeListForTextarea(items = []) {
+  return (items || []).map(item => String(item || '').trim()).filter(Boolean).join('\n');
+}
+
+function normalizeBranchSpecsForTextarea(branches = []) {
+  return (branches || [])
+    .map(branch => {
+      const title = String(branch?.title || branch?.id || '').trim();
+      const question = String(branch?.question || '').trim();
+      if (!title) {
+        return '';
+      }
+      return question ? `${title}::${question}` : title;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function parsePaperImportEntries(text) {
+  return String(text || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const parts = line.split('|').map(item => item.trim()).filter(Boolean);
+      if (parts.length === 0) {
+        return null;
+      }
+
+      let title = '';
+      let source = '';
+      let notes = '';
+      const sourceIndex = parts.findIndex(part => extractArxivId(part) || /^https?:\/\//i.test(part));
+
+      if (sourceIndex === 0) {
+        source = parts[0];
+        notes = parts.slice(1).join(' | ');
+      } else if (sourceIndex > 0) {
+        title = parts[0];
+        source = parts[sourceIndex];
+        notes = parts.filter((_, index) => index !== 0 && index !== sourceIndex).join(' | ');
+      } else {
+        title = parts[0];
+        notes = parts.slice(1).join(' | ');
+      }
+
+      return {
+        raw: line,
+        title,
+        source,
+        notes,
+        arxivId: extractArxivId(source || parts[0])
+      };
+    })
+    .filter(Boolean)
+    .filter(entry => entry.title || entry.source);
+}
+
+async function resolveImportedSeedRecords({ entries, defaults }) {
+  const arxivIds = [...new Set(
+    (entries || [])
+      .map(entry => normalizeArxivId(entry.arxivId))
+      .filter(Boolean)
+  )];
+  const arxivPapers = await fetchArxivEntriesByIds(arxivIds);
+  const arxivMap = new Map(
+    arxivPapers.map(paper => [normalizeArxivId(paper.arxivId), paper])
+  );
+
+  return (entries || []).map((entry, index) => {
+    const arxivId = normalizeArxivId(entry.arxivId);
+    const arxivPaper = arxivMap.get(arxivId) || null;
+    const fallbackTitle = entry.title || arxivPaper?.title || arxivId || `Imported Paper ${index + 1}`;
+    const fallbackAbsUrl = entry.source && /^https?:\/\/(?:www\.)?arxiv\.org\/abs\//i.test(entry.source)
+      ? entry.source
+      : (arxivPaper?.absUrl || (arxivId ? `https://arxiv.org/abs/${arxivId}` : ''));
+    const fallbackPdfUrl = entry.source && /^https?:\/\/(?:www\.)?arxiv\.org\/pdf\//i.test(entry.source)
+      ? entry.source
+      : (arxivPaper?.pdfUrl || (arxivId ? `https://arxiv.org/pdf/${arxivId}` : ''));
+    return {
+      title: fallbackTitle,
+      status: defaults.status,
+      anchor: defaults.anchor,
+      liked: defaults.liked,
+      branchId: defaults.branchId || '',
+      notes: entry.notes || '',
+      arxivId,
+      absUrl: fallbackAbsUrl,
+      pdfUrl: fallbackPdfUrl,
+      source: entry.source || (arxivId ? 'arxiv' : 'manual'),
+      directImport: Boolean(arxivId)
+    };
+  });
 }
 
 function markdownInline(text, rootDir = '') {
@@ -1080,7 +1195,7 @@ function renderKnowledgePage(rootDir) {
   });
 }
 
-function renderRecordCards(records, formAction, deleteAction, emptyCopy) {
+function renderFeedbackCards(records, formAction, deleteAction, emptyCopy) {
   if (!records.length) {
     return `<article class="paper-card"><p class="muted">${escapeHtml(emptyCopy)}</p></article>`;
   }
@@ -1107,17 +1222,77 @@ function renderRecordCards(records, formAction, deleteAction, emptyCopy) {
   ].join('')).join('');
 }
 
+function renderSeedCards(records, formAction, deleteAction, emptyCopy) {
+  if (!records.length) {
+    return `<article class="paper-card"><p class="muted">${escapeHtml(emptyCopy)}</p></article>`;
+  }
+
+  return records.map(record => {
+    const metaTags = [
+      record.branchId ? `<span class="tag">branch ${escapeHtml(record.branchId)}</span>` : '',
+      record.arxivId ? `<span class="tag">arXiv ${escapeHtml(record.arxivId)}</span>` : '',
+      record.directImport ? '<span class="tag">direct import</span>' : ''
+    ].filter(Boolean).join('');
+    const linkButtons = [
+      record.absUrl ? `<a class="button ghost" href="${escapeAttr(record.absUrl)}" target="_blank" rel="noreferrer">arXiv Abs</a>` : '',
+      record.pdfUrl ? `<a class="button ghost" href="${escapeAttr(record.pdfUrl)}" target="_blank" rel="noreferrer">PDF</a>` : ''
+    ].filter(Boolean).join('');
+
+    return [
+      '<article class="paper-card">',
+      metaTags ? `<div class="meta-row">${metaTags}</div>` : '',
+      `<form class="stack" method="post" action="${formAction}">`,
+      `<input type="hidden" name="originalTitle" value="${escapeAttr(record.title || '')}">`,
+      `<input type="hidden" name="arxivId" value="${escapeAttr(record.arxivId || '')}">`,
+      `<input type="hidden" name="absUrl" value="${escapeAttr(record.absUrl || '')}">`,
+      `<input type="hidden" name="pdfUrl" value="${escapeAttr(record.pdfUrl || '')}">`,
+      `<input type="hidden" name="source" value="${escapeAttr(record.source || '')}">`,
+      `<input type="hidden" name="directImport" value="${record.directImport ? 'true' : ''}">`,
+      '<div class="form-grid">',
+      `<label>标题<input type="text" name="title" value="${escapeAttr(record.title || '')}" required></label>`,
+      `<label>状态<select name="status"><option value="read" ${record.status === 'read' ? 'selected' : ''}>read</option><option value="skimmed" ${record.status === 'skimmed' ? 'selected' : ''}>skimmed</option><option value="queued" ${record.status === 'queued' ? 'selected' : ''}>queued</option><option value="archived" ${record.status === 'archived' ? 'selected' : ''}>archived</option></select></label>`,
+      '</div>',
+      '<div class="form-grid">',
+      `<label>Branch ID<input type="text" name="branchId" value="${escapeAttr(record.branchId || '')}" placeholder="例如 open-ended-evolution"></label>`,
+      `<label>Source<input type="text" value="${escapeAttr(record.source || '')}" disabled></label>`,
+      '</div>',
+      '<div class="form-grid">',
+      `<label>Anchor <input type="checkbox" name="anchor" ${record.anchor ? 'checked' : ''}></label>`,
+      `<label>Liked <input type="checkbox" name="liked" ${record.liked ? 'checked' : ''}></label>`,
+      '</div>',
+      `<label>备注<textarea name="notes">${escapeHtml(record.notes || '')}</textarea></label>`,
+      linkButtons ? `<div class="form-actions">${linkButtons}</div>` : '',
+      '<div class="form-actions">',
+      '<button class="button" type="submit">保存</button>',
+      '</div>',
+      '</form>',
+      `<form method="post" action="${deleteAction}" class="form-actions" style="margin-top:10px;"><input type="hidden" name="title" value="${escapeAttr(record.title || '')}"><button class="button ghost" type="submit">删除</button></form>`,
+      '</article>'
+    ].join('');
+  }).join('');
+}
+
 function renderSettingsPage(rootDir, flashMessage = '') {
   const runtime = loadRuntimeState(rootDir);
   const settings = loadSettingsState(rootDir);
-  const parsedTaxonomy = (() => {
+  const parsedTaxonomyConfig = (() => {
     try {
-      const parsed = JSON.parse(settings.methodTaxonomyText || '{}');
-      return Array.isArray(parsed.branches) ? parsed.branches : [];
+      return JSON.parse(settings.methodTaxonomyText || '{}');
     } catch {
-      return [];
+      return {};
     }
   })();
+  const parsedTaxonomy = Array.isArray(parsedTaxonomyConfig.branches) ? parsedTaxonomyConfig.branches : [];
+  const bootstrapDirection = String(
+    parsedTaxonomyConfig.root_title
+    || settings.parsedBrief.currentGoal?.[0]
+    || 'self-evolving agents'
+  ).trim();
+  const bootstrapSeedSpecs = (settings.seeds || [])
+    .slice(0, 8)
+    .map(seed => `${seed.title || ''}${seed.notes ? `|${seed.notes}` : ''}`)
+    .filter(Boolean)
+    .join('\n');
 
   const currentGoal = (settings.parsedBrief.currentGoal || []).map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('');
 
@@ -1131,6 +1306,62 @@ function renderSettingsPage(rootDir, flashMessage = '') {
     '          <div class="toolbar"><h2>当前研究主线</h2><span class="small muted">解析自 research_brief.md</span></div>',
     `          <div class="meta-row">${currentGoal || '<span class="tag">暂无 Current Goal</span>'}</div>`,
     `          <p class="muted">每日范围：${escapeHtml(String(settings.parsedBrief.minPapers))} - ${escapeHtml(String(settings.parsedBrief.maxPapers))}，目标 ${escapeHtml(String(settings.parsedBrief.targetPapers))}，发送时间 ${escapeHtml(settings.parsedBrief.sendTime)}</p>`,
+    '        </section>',
+    '        <section class="panel">',
+    '          <div class="section-heading"><h2>首次使用 / 研究画像向导</h2><span class="small muted">把 CLI 初始化画像流程搬进 Web，避免第一次上手就直接改 raw markdown。</span></div>',
+    '          <p class="muted">这里建议先写清研究方向、当前阶段目标、关键词、正负信号和长期问题分支。保存后会生成 `research_brief.md`、`method_taxonomy.json`、`method_tree_notes.md`，可选地刷新反馈默认项，并且可以直接触发一次今日运行。</p>',
+    `          <form method="post" action="${APP_BASE_PATH}/settings/bootstrap" class="stack">`,
+    '            <div class="form-grid">',
+    `              <label>研究方向<input type="text" name="direction" value="${escapeAttr(bootstrapDirection)}" required></label>`,
+    `              <label>当前阶段目标<input type="text" name="currentGoal" value="${escapeAttr(settings.parsedBrief.currentGoal?.[0] || '优先积累方法组件、问题框架与必要性分析。')}" required></label>`,
+    '            </div>',
+    '            <div class="form-grid">',
+    `              <label>时区<input type="text" name="timezone" value="${escapeAttr(settings.parsedBrief.timezone || 'Asia/Shanghai')}" required></label>`,
+    `              <label>发送时间<input type="text" name="sendTime" value="${escapeAttr(settings.parsedBrief.sendTime || '06:00')}" required></label>`,
+    '            </div>',
+    '            <div class="form-grid">',
+    `              <label>每天最少几篇<input type="text" name="minPapers" value="${escapeAttr(String(settings.parsedBrief.minPapers || 3))}" required></label>`,
+    `              <label>每天目标几篇<input type="text" name="targetPapers" value="${escapeAttr(String(settings.parsedBrief.targetPapers || 5))}" required></label>`,
+    '            </div>',
+    '            <div class="form-grid">',
+    `              <label>每天最多几篇<input type="text" name="maxPapers" value="${escapeAttr(String(settings.parsedBrief.maxPapers || 8))}" required></label>`,
+    `              <label>阅读偏好<textarea name="readingPreference">${escapeHtml((settings.parsedBrief.readingPreference || []).join('；') || '优先解释这篇论文为什么今天该看、补的是哪块方法拼图。')}</textarea></label>`,
+    '            </div>',
+    '            <div class="form-grid">',
+    `              <label>Focus Keywords<textarea name="focusKeywords">${escapeHtml(normalizeListForTextarea(settings.parsedBrief.focusKeywords))}</textarea></label>`,
+    `              <label>Positive Signals<textarea name="positiveSignals">${escapeHtml(normalizeListForTextarea(settings.parsedBrief.positiveSignals))}</textarea></label>`,
+    '            </div>',
+    '            <div class="form-grid">',
+    `              <label>Negative Signals<textarea name="negativeSignals">${escapeHtml(normalizeListForTextarea(settings.parsedBrief.negativeSignals))}</textarea></label>`,
+    `              <label>长期问题分支<textarea name="branchSpecs">${escapeHtml(normalizeBranchSpecsForTextarea(parsedTaxonomy))}</textarea></label>`,
+    '            </div>',
+    `            <label>初始锚点论文（可选，格式：标题|备注；每行一条）<textarea name="seedSpecs">${escapeHtml(bootstrapSeedSpecs)}</textarea></label>`,
+    '            <div class="form-grid">',
+    '              <label>按正负信号刷新 feedback 默认项 <input type="checkbox" name="replaceFeedback"></label>',
+    '              <label>保存后立即触发一次今日运行 <input type="checkbox" name="runAfterSave"></label>',
+    '            </div>',
+    '            <div class="form-actions"><button class="button" type="submit">生成研究画像</button></div>',
+    '          </form>',
+    '        </section>',
+    '        <section class="panel">',
+    '          <div class="section-heading"><h2>论文导入 / 批量种子录入</h2><span class="small muted">单篇就是一行，批量就是多行。优先支持 arXiv ID / abs / pdf URL。</span></div>',
+    '          <p class="muted">推荐格式：`2603.12345 | 为什么值得跟`、`https://arxiv.org/abs/2603.12345 | 补 verifier 线`、`标题 | https://arxiv.org/abs/2603.12345 | 备注`。导入后会写入 `seed_papers.jsonl`，并保留 `arxivId / absUrl / pdfUrl / directImport` 元数据。</p>',
+    `          <form method="post" action="${APP_BASE_PATH}/settings/imports/save" class="stack">`,
+    '            <label>导入内容<textarea name="entries" placeholder="2603.12345 | 补 verifier 线"></textarea></label>',
+    '            <div class="form-grid">',
+    '              <label>默认状态<select name="status"><option value="queued" selected>queued</option><option value="read">read</option><option value="skimmed">skimmed</option><option value="archived">archived</option></select></label>',
+    '              <label>默认 Branch ID<input type="text" name="branchId" placeholder="例如 open-ended-evolution"></label>',
+    '            </div>',
+    '            <div class="form-grid">',
+    '              <label>默认 Anchor <input type="checkbox" name="anchor"></label>',
+    '              <label>默认 Liked <input type="checkbox" name="liked"></label>',
+    '            </div>',
+    '            <div class="form-grid">',
+    '              <label>保存后立即触发一次今日运行 <input type="checkbox" name="runAfterSave"></label>',
+    '              <span class="small muted">如果只是先建库，不勾选即可。</span>',
+    '            </div>',
+    '            <div class="form-actions"><button class="button" type="submit">导入论文</button></div>',
+    '          </form>',
     '        </section>',
     '        <section class="panel">',
     '          <div class="section-heading"><h2>研究主线说明</h2><span class="small muted">raw source: research_brief.md</span></div>',
@@ -1161,9 +1392,18 @@ function renderSettingsPage(rootDir, flashMessage = '') {
     '          <div class="stack">',
     '            <form method="post" action="/research-intel/settings/seeds/save" class="panel" style="padding:18px;">',
     '              <input type="hidden" name="originalTitle" value="">',
+    '              <input type="hidden" name="arxivId" value="">',
+    '              <input type="hidden" name="absUrl" value="">',
+    '              <input type="hidden" name="pdfUrl" value="">',
+    '              <input type="hidden" name="source" value="">',
+    '              <input type="hidden" name="directImport" value="">',
     '              <div class="form-grid">',
     '                <label>标题<input type="text" name="title" required></label>',
     '                <label>状态<select name="status"><option value="read">read</option><option value="skimmed">skimmed</option><option value="queued">queued</option><option value="archived">archived</option></select></label>',
+    '              </div>',
+    '              <div class="form-grid">',
+    '                <label>Branch ID<input type="text" name="branchId" placeholder="例如 open-ended-evolution"></label>',
+    '                <label>Source<input type="text" value="manual" disabled></label>',
     '              </div>',
     '              <div class="form-grid">',
     '                <label>Anchor <input type="checkbox" name="anchor"></label>',
@@ -1173,7 +1413,7 @@ function renderSettingsPage(rootDir, flashMessage = '') {
     '              <div class="form-actions"><button class="button" type="submit">新增 Seed</button></div>',
     '            </form>',
     '            <div class="paper-list">',
-    renderRecordCards(settings.seeds, `${APP_BASE_PATH}/settings/seeds/save`, `${APP_BASE_PATH}/settings/seeds/delete`, '暂无种子论文。'),
+    renderSeedCards(settings.seeds, `${APP_BASE_PATH}/settings/seeds/save`, `${APP_BASE_PATH}/settings/seeds/delete`, '暂无种子论文。'),
     '            </div>',
     '          </div>',
     '        </section>',
@@ -1194,7 +1434,7 @@ function renderSettingsPage(rootDir, flashMessage = '') {
     '              <div class="form-actions"><button class="button" type="submit">新增 Feedback</button></div>',
     '            </form>',
     '            <div class="paper-list">',
-    renderRecordCards(settings.feedback, `${APP_BASE_PATH}/settings/feedback/save`, `${APP_BASE_PATH}/settings/feedback/delete`, '暂无反馈记录。'),
+    renderFeedbackCards(settings.feedback, `${APP_BASE_PATH}/settings/feedback/save`, `${APP_BASE_PATH}/settings/feedback/delete`, '暂无反馈记录。'),
     '            </div>',
     '          </div>',
     '        </section>'
@@ -1211,31 +1451,34 @@ function renderSettingsPage(rootDir, flashMessage = '') {
 
 function parseFlashMessage(query) {
   const saved = String(query.saved || '').trim();
-  if (String(query.triggered || '') === '1') {
-    return '已触发一次手动运行，worker 会在后台继续执行。';
-  }
-  if (String(query.busy || '') === '1') {
-    return '当前已经有运行中的 worker，控制台没有再次触发。';
-  }
-  if (!saved) {
-    return '';
-  }
-
   const mapping = {
+    bootstrap: '研究画像已生成。',
     brief: 'research_brief.md 已保存。',
     taxonomy: 'method_taxonomy.json 已保存。',
     notes: 'method_tree_notes.md 已保存。',
     seeds: 'seed_papers.jsonl 已更新。',
-    feedback: 'feedback.jsonl 已更新。'
+    feedback: 'feedback.jsonl 已更新。',
+    imports: '导入论文已写入 seed_papers.jsonl。'
   };
-  return escapeHtml(mapping[saved] || '已保存。');
+  const messages = [];
+  if (saved) {
+    messages.push(mapping[saved] || '已保存。');
+  }
+  if (String(query.triggered || '') === '1') {
+    messages.push('已触发一次手动运行，worker 会在后台继续执行。');
+  }
+  if (String(query.busy || '') === '1') {
+    messages.push('当前已经有运行中的 worker，控制台没有再次触发。');
+  }
+  return escapeHtml(messages.join(' '));
 }
 
 function createResearchIntelWebApp({
   rootDir,
   sitePassword,
   sessionSecret = '',
-  runDaily = null
+  runDaily = null,
+  resolveImportEntries = null
 }) {
   if (!rootDir) {
     throw new Error('createResearchIntelWebApp requires rootDir');
@@ -1247,6 +1490,7 @@ function createResearchIntelWebApp({
   const app = express();
   const sessionToken = createSessionToken(sitePassword, sessionSecret || sitePassword);
   const runDailyHandler = runDaily || (() => defaultRunDaily(rootDir));
+  const resolveImportEntriesHandler = resolveImportEntries || resolveImportedSeedRecords;
 
   app.use(express.urlencoded({ extended: false, limit: '3mb' }));
 
@@ -1337,6 +1581,70 @@ function createResearchIntelWebApp({
     res.redirect(303, `${APP_BASE_PATH}/settings?saved=brief`);
   });
 
+  app.post(`${APP_BASE_PATH}/settings/bootstrap`, async (req, res, next) => {
+    try {
+      const profilePaths = getProfilePaths(rootDir);
+      const timezone = String(req.body.timezone || 'Asia/Shanghai').trim() || 'Asia/Shanghai';
+      const sendTime = String(req.body.sendTime || '06:00').trim() || '06:00';
+      const minPapers = parsePositiveInteger(req.body.minPapers, 3);
+      const targetPapers = parsePositiveInteger(req.body.targetPapers, 5);
+      const maxPapers = parsePositiveInteger(req.body.maxPapers, Math.max(targetPapers, 8));
+      const direction = String(req.body.direction || 'self-evolving agents').trim() || 'self-evolving agents';
+      const currentGoal = String(req.body.currentGoal || '优先积累方法组件、问题框架与必要性分析。').trim() || '优先积累方法组件、问题框架与必要性分析。';
+      const focusKeywords = parseList(req.body.focusKeywords);
+      const positiveSignals = parseList(req.body.positiveSignals);
+      const negativeSignals = parseList(req.body.negativeSignals);
+      const readingPreference = parseList(req.body.readingPreference).join('；') || '优先解释这篇论文为什么今天该看。';
+      const branchSpecs = parseBranchSpecs(req.body.branchSpecs);
+      const seedSpecs = parseSeedSpecs(req.body.seedSpecs);
+
+      fs.writeFileSync(profilePaths.researchBriefPath, buildResearchBrief({
+        timezone,
+        sendTime,
+        minPapers,
+        targetPapers,
+        maxPapers,
+        direction,
+        currentGoal,
+        focusKeywords,
+        positiveSignals,
+        negativeSignals,
+        readingPreference
+      }), 'utf8');
+      fs.writeFileSync(profilePaths.methodTaxonomyPath, `${JSON.stringify({
+        root_title: direction,
+        branches: branchSpecs
+      }, null, 2)}\n`, 'utf8');
+      fs.writeFileSync(profilePaths.methodTreeNotesPath, buildMethodTreeNotes(direction, branchSpecs), 'utf8');
+
+      if (boolFromForm(req.body.replaceFeedback) || readJsonl(profilePaths.feedbackPath).length === 0) {
+        fs.writeFileSync(profilePaths.feedbackPath, serializeJsonl(buildFeedbackRecords(positiveSignals, negativeSignals)), 'utf8');
+      }
+
+      if (seedSpecs.length > 0) {
+        const currentSeeds = readJsonl(profilePaths.seedPapersPath);
+        const nextSeeds = seedSpecs.reduce(
+          (records, seed) => upsertJsonlRecord(records, seed.title, seed, { mergeExisting: true }),
+          currentSeeds
+        );
+        fs.writeFileSync(profilePaths.seedPapersPath, serializeJsonl(nextSeeds), 'utf8');
+      }
+
+      if (boolFromForm(req.body.runAfterSave)) {
+        const runtime = loadRuntimeState(rootDir);
+        if (isRuntimeBusy(runtime)) {
+          return res.redirect(303, `${APP_BASE_PATH}/settings?saved=bootstrap&busy=1`);
+        }
+        await runDailyHandler();
+        return res.redirect(303, `${APP_BASE_PATH}/settings?saved=bootstrap&triggered=1`);
+      }
+
+      return res.redirect(303, `${APP_BASE_PATH}/settings?saved=bootstrap`);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   app.post(`${APP_BASE_PATH}/settings/method-taxonomy`, (req, res) => {
     const { methodTaxonomyPath } = getProfilePaths(rootDir);
     const content = String(req.body.content || '').trim();
@@ -1354,17 +1662,27 @@ function createResearchIntelWebApp({
   app.post(`${APP_BASE_PATH}/settings/seeds/save`, (req, res) => {
     const { seedPapersPath } = getProfilePaths(rootDir);
     const records = readJsonl(seedPapersPath);
+    const existingRecord = records.find(record => normalizeRecordTitle(record) === normalizeTitle(req.body.originalTitle || req.body.title)) || {};
     const nextRecord = {
+      ...existingRecord,
       title: String(req.body.title || '').trim(),
       status: String(req.body.status || 'queued').trim() || 'queued',
       anchor: boolFromForm(req.body.anchor),
       liked: boolFromForm(req.body.liked),
-      notes: String(req.body.notes || '').trim()
+      branchId: String(req.body.branchId ?? existingRecord.branchId ?? '').trim(),
+      notes: String(req.body.notes || '').trim(),
+      arxivId: normalizeArxivId(req.body.arxivId || existingRecord.arxivId || ''),
+      absUrl: String(req.body.absUrl ?? existingRecord.absUrl ?? '').trim(),
+      pdfUrl: String(req.body.pdfUrl ?? existingRecord.pdfUrl ?? '').trim(),
+      source: String(req.body.source ?? existingRecord.source ?? '').trim(),
+      directImport: Object.prototype.hasOwnProperty.call(req.body, 'directImport')
+        ? boolFromForm(req.body.directImport)
+        : Boolean(existingRecord.directImport)
     };
     if (!nextRecord.title) {
       throw new Error('Seed title is required.');
     }
-    const nextRecords = upsertJsonlRecord(records, req.body.originalTitle, nextRecord);
+    const nextRecords = upsertJsonlRecord(records, req.body.originalTitle, nextRecord, { mergeExisting: true });
     fs.writeFileSync(seedPapersPath, serializeJsonl(nextRecords), 'utf8');
     res.redirect(303, `${APP_BASE_PATH}/settings?saved=seeds`);
   });
@@ -1401,6 +1719,46 @@ function createResearchIntelWebApp({
     const nextRecords = deleteJsonlRecord(records, req.body.title);
     fs.writeFileSync(feedbackPath, serializeJsonl(nextRecords), 'utf8');
     res.redirect(303, `${APP_BASE_PATH}/settings?saved=feedback`);
+  });
+
+  app.post(`${APP_BASE_PATH}/settings/imports/save`, async (req, res, next) => {
+    try {
+      const { seedPapersPath } = getProfilePaths(rootDir);
+      const existingRecords = readJsonl(seedPapersPath);
+      const entries = parsePaperImportEntries(req.body.entries);
+      if (entries.length === 0) {
+        throw new Error('至少填写一条论文导入记录。');
+      }
+
+      const importedRecords = await resolveImportEntriesHandler({
+        entries,
+        defaults: {
+          status: String(req.body.status || 'queued').trim() || 'queued',
+          anchor: boolFromForm(req.body.anchor),
+          liked: boolFromForm(req.body.liked),
+          branchId: String(req.body.branchId || '').trim()
+        }
+      });
+
+      const nextRecords = importedRecords.reduce(
+        (records, record) => upsertJsonlRecord(records, record.title, record, { mergeExisting: true }),
+        existingRecords
+      );
+      fs.writeFileSync(seedPapersPath, serializeJsonl(nextRecords), 'utf8');
+
+      if (boolFromForm(req.body.runAfterSave)) {
+        const runtime = loadRuntimeState(rootDir);
+        if (isRuntimeBusy(runtime)) {
+          return res.redirect(303, `${APP_BASE_PATH}/settings?saved=imports&busy=1`);
+        }
+        await runDailyHandler();
+        return res.redirect(303, `${APP_BASE_PATH}/settings?saved=imports&triggered=1`);
+      }
+
+      return res.redirect(303, `${APP_BASE_PATH}/settings?saved=imports`);
+    } catch (error) {
+      return next(error);
+    }
   });
 
   app.post(`${APP_BASE_PATH}/actions/run`, async (req, res, next) => {
