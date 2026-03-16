@@ -10,6 +10,10 @@ const {
   resolveCodexEnhancementConfig
 } = require('../scripts/research-intel/lib/codex-enhancement-config');
 
+test('DEFAULT_CODEX_HTML_TIMEOUT_MS matches the baohe-safe default window', () => {
+  assert.equal(DEFAULT_CODEX_HTML_TIMEOUT_MS, 600000);
+});
+
 test('resolveCodexEnhancementConfig enables Codex HTML generation by default', () => {
   const config = resolveCodexEnhancementConfig({});
 
