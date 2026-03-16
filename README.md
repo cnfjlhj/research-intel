@@ -115,6 +115,7 @@ cp .env.example .env
 
 - Codex HTML 主链路
   - `RESEARCH_INTEL_CODEX_HTML_MODEL`：默认 `gpt-5.4`
+  - `RESEARCH_INTEL_CODEX_HTML_REASONING_EFFORT`：可选，默认 `medium`
   - `RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS`：可选，默认 `300000`
 - Telegram 推送
   - `TELEGRAM_BOT_TOKEN`

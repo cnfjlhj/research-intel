@@ -145,6 +145,7 @@ function resolveRuntimeModelConfig(env = process.env) {
       : 60000,
     codexHtmlEnhancementEnabled: codexEnhancementConfig.enabled,
     codexHtmlModel: codexEnhancementConfig.model,
+    codexHtmlReasoningEffort: codexEnhancementConfig.reasoningEffort,
     codexHtmlTimeoutMs: codexEnhancementConfig.timeoutMs
   };
 }
@@ -811,6 +812,7 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
       promptText,
       attachedPageImages,
       model: options.codexHtmlModel,
+      reasoningEffort: options.codexHtmlReasoningEffort,
       timeoutMs: options.codexHtmlTimeoutMs
     });
     const rawFinalMessage = fs.existsSync(finalMessagePath) ? fs.readFileSync(finalMessagePath, 'utf8') : codexRun.finalMessage || '';
@@ -892,6 +894,7 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
           promptText: enhancementPrompt,
           attachedPageImages: codexEvidenceImages,
           model: options.codexHtmlModel,
+          reasoningEffort: options.codexHtmlReasoningEffort,
           timeoutMs: options.codexHtmlTimeoutMs
         });
         writeText(enhancementStdoutPath, `${enhancementRun.stdout || ''}\n`);
@@ -967,6 +970,7 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
           promptText: repairPrompt,
           attachedPageImages,
           model: options.codexHtmlModel,
+          reasoningEffort: options.codexHtmlReasoningEffort,
           timeoutMs: options.codexHtmlTimeoutMs
         });
         const repairMessage = fs.existsSync(repairResponsePath) ? fs.readFileSync(repairResponsePath, 'utf8') : codexRepairRun.finalMessage || '';

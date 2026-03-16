@@ -1478,6 +1478,7 @@ async function runCodexHtmlGeneration({
   promptText,
   attachedPageImages,
   model = 'gpt-5.4',
+  reasoningEffort = 'medium',
   timeoutMs = 300000
 }) {
   const args = [
@@ -1494,6 +1495,7 @@ async function runCodexHtmlGeneration({
     '-o',
     finalMessagePath
   ];
+  args.push('-c', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`);
 
   for (const imagePath of resolveAttachedPageImages(attachedPageImages)) {
     args.push('-i', imagePath);
