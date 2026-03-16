@@ -59,6 +59,7 @@ research-intel/
   - 用于 HTML 浏览器校验
 - `tmux` 与 `codex`
   - 默认部署路径需要这两项
+  - 开始前先确保当前 shell 里 `codex exec -m gpt-5.4 ...` 已经能独立跑通
 
 ### Docker 模式
 
@@ -67,7 +68,20 @@ research-intel/
 
 ## 快速开始
 
-### 0. 三分钟试跑
+### 0. 先确认 Codex CLI 可用
+
+Research Intel 的公开默认路径是直接调用 `codex exec -m gpt-5.4` 生成单篇论文 HTML。
+这个仓库不负责你的 Codex 登录、provider、base URL 或 key 配置；这些要先在 Codex CLI 自己的配置层完成。
+
+最简单的宿主机自检方式：
+
+```bash
+codex exec --skip-git-repo-check -C /tmp -m gpt-5.4 "Reply with OK only."
+```
+
+如果这条命令在你的机器上还没通，先把 Codex CLI 配好，再继续下面的仓库初始化。
+
+### 1. 三分钟试跑
 
 如果你只是想先看看这套系统跑出来是什么样，不想先回答一轮初始化问题：
 
@@ -90,20 +104,18 @@ docker compose run --rm daily-no-telegram
 
 这条路径默认**不会触发 Telegram 推送**，适合第一次试跑。
 
-### 1. 安装依赖
+### 2. 安装依赖
 
 ```bash
 npm install
 cp .env.example .env
 ```
 
-然后至少把 `.env` 里的这些配置改成自己的值：
+然后至少把 `.env` 里的这些项目级配置改成自己的值：
 
-- 模型链路
-  - `RESEARCH_INTEL_API_BASE_URL`
-  - `RESEARCH_INTEL_API_KEY`
-  - `RESEARCH_INTEL_HTML_MODELS`
-  - `RESEARCH_INTEL_CHAT_TIMEOUT_MS`：可选，默认 `60000`，用于限制 HTML 生成与 daily curation 的单次模型请求等待时间，避免 fresh clone 卡死在无响应接口上
+- Codex HTML 主链路
+  - `RESEARCH_INTEL_CODEX_HTML_MODEL`：默认 `gpt-5.4`
+  - `RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS`：可选，默认 `120000`
 - Telegram 推送
   - `TELEGRAM_BOT_TOKEN`
   - `TELEGRAM_CHAT_ID`
@@ -111,13 +123,28 @@ cp .env.example .env
 - Web 控制台
   - `RESEARCH_INTEL_WEB_PASSWORD`
   - `RESEARCH_INTEL_WEB_SESSION_SECRET`
+- 调度模式
+  - `RESEARCH_INTEL_RUN_MODE=codex`
 
-`RESEARCH_INTEL_CODEX_HTML_MODEL` 默认启用：
+如果你只是按公开默认路径使用，这些 legacy 配置可以留空：
 
-- 默认值 `gpt-5.4-mini`：启用 `codex exec` 对论文 HTML 做二次强化
-- 留空：手动跳过 Codex HTML 强化，作为降级/调试路径
+- `RESEARCH_INTEL_API_BASE_URL`
+- `RESEARCH_INTEL_API_KEY`
+- `RESEARCH_INTEL_HTML_MODELS`
+- `RESEARCH_INTEL_CURATION_MODELS`
+- `RESEARCH_INTEL_CHAT_TIMEOUT_MS`
 
-### 2. 初始化研究画像
+留空时：
+
+- HTML 主链直接走 Codex
+- daily curation 退回本地确定性编排
+
+`RESEARCH_INTEL_CODEX_HTML_MODEL` 默认值是 `gpt-5.4`：
+
+- 保持默认：直接用 `codex exec` 生成论文 HTML，这是公开默认路径
+- 留空：只在内部调试时切到 legacy chat-completions 路径；这不是公开默认工作流
+
+### 3. 初始化研究画像
 
 两种方式都支持：
 
@@ -157,7 +184,7 @@ cp .env.example .env
 仓库里的 `examples/profile/default/` 只是一个公开演示样例，用来展示画像文件长什么样，不会自动覆盖你的真实运行画像。
 如果你手动执行 `npm run profile:example`，它会把示例画像写入 `work/research-intel/profile/`，因此更适合第一次试跑或空白环境。
 
-### 3. 先跑一轮日报
+### 4. 先跑一轮日报
 
 ```bash
 npm run daily:no-telegram
@@ -171,9 +198,9 @@ npm run daily:no-telegram
 npm run daily
 ```
 
-第一次建议先用 `daily:no-telegram` 验证模型与 HTML 链路，再切到真实推送。
+第一次建议先用 `daily:no-telegram` 验证 Codex 与 HTML 链路，再切到真实推送。
 
-### 4. 启动 Web 控制台
+### 5. 启动 Web 控制台
 
 ```bash
 npm run web:start
@@ -222,6 +249,10 @@ docker compose run --rm profile-example
 docker compose run --rm daily-no-telegram
 docker compose up -d scheduler
 ```
+
+Compose 镜像会安装 `codex` CLI，并默认把宿主机 `${HOME}/.codex` 挂载到容器内的 `/root/.codex`，这样容器里的 Web 手动触发、`daily-no-telegram` 和调度循环都能复用你宿主机已经配置好的 Codex 认证状态。
+
+如果你的 Docker 运行环境拿不到宿主机 `${HOME}/.codex`，优先使用宿主机模式，不要假设容器会自动完成 Codex 登录。
 
 容器里默认会挂载：
 

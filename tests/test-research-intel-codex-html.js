@@ -125,7 +125,7 @@ test('buildHtmlRepairPrompt patches the current html against validation findings
   assert.match(prompt, /Tailwind CDN/);
 });
 
-test('buildHtmlEnhancementPrompt preserves gemini layout while asking codex to deepen content and use evidence', () => {
+test('buildHtmlEnhancementPrompt preserves the existing draft structure while asking codex to deepen content and use evidence', () => {
   const prompt = buildHtmlEnhancementPrompt({
     currentHtml: '<!DOCTYPE html><html><body><section class="hero">draft</section></body></html>',
     paperMetaJson: '{"title":"Group-Evolving Agents"}',
@@ -136,7 +136,7 @@ test('buildHtmlEnhancementPrompt preserves gemini layout while asking codex to d
   });
 
   assert.match(prompt, /基于当前 HTML 深化和修补/);
-  assert.match(prompt, /尽量保留 Gemini 初稿里已经成立的视觉结构/);
+  assert.match(prompt, /尽量保留当前初稿里已经成立的视觉结构/);
   assert.match(prompt, /真实页面证据/);
   assert.match(prompt, /web coverage/);
   assert.match(prompt, /evidence manifest/);

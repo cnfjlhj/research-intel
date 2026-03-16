@@ -471,7 +471,7 @@ test('research-intel web app strips frontmatter and renders markdown tables on d
     writeText(path.join(server.rootDir, 'research-intel-records', 'daily', '2026-03-14', 'brief.md'), [
       '---',
       'date: 2026-03-14',
-      'model: gemini-flash-latest',
+      'model: gpt-5.4',
       '---',
       '',
       '# 今日简报',

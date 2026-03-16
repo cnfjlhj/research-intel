@@ -96,7 +96,7 @@
 
 ### 3. 后补的功能
 
-- 更复杂的 `Gemini draft + compare.html + codex primary` 契约
+- 更复杂的 `multi-stage draft + compare.html + codex primary` 契约
 - 更重的 bundle 产物设计
 - 更大的 Web 结构升级
 

@@ -20,6 +20,8 @@ RUN apt-get update \
     tmux \
   && rm -rf /var/lib/apt/lists/*
 
+RUN npm install -g @openai/codex@0.114.0
+
 WORKDIR /app
 
 COPY package.json package-lock.json* ./

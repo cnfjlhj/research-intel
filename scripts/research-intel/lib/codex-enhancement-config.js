@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const DEFAULT_CODEX_HTML_TIMEOUT_MS = 120000;
+const DEFAULT_CODEX_HTML_MODEL = 'gpt-5.4';
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value || '').trim(), 10);
@@ -11,7 +12,10 @@ function parsePositiveInt(value, fallback) {
 }
 
 function resolveCodexEnhancementConfig(env = process.env) {
-  const model = String(env.RESEARCH_INTEL_CODEX_HTML_MODEL || '').trim();
+  const rawModel = Object.prototype.hasOwnProperty.call(env, 'RESEARCH_INTEL_CODEX_HTML_MODEL')
+    ? env.RESEARCH_INTEL_CODEX_HTML_MODEL
+    : DEFAULT_CODEX_HTML_MODEL;
+  const model = String(rawModel || '').trim();
   return {
     enabled: model.length > 0,
     model,
@@ -20,6 +24,7 @@ function resolveCodexEnhancementConfig(env = process.env) {
 }
 
 module.exports = {
+  DEFAULT_CODEX_HTML_MODEL,
   DEFAULT_CODEX_HTML_TIMEOUT_MS,
   resolveCodexEnhancementConfig
 };

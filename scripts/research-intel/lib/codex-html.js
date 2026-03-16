@@ -487,11 +487,11 @@ function buildHtmlEnhancementPrompt({
 }) {
   return [
     '你现在要基于当前 HTML 深化和修补一份论文页面，而不是从零另起炉灶。',
-    '目标是：保留 Gemini 初稿里已经成立的视觉质感和页面节奏，但把内容深度、证据密度、图表呈现和 reviewer 视角补足。',
+    '目标是：保留当前初稿里已经成立的视觉质感和页面节奏，但把内容深度、证据密度、图表呈现和 reviewer 视角补足。',
     '最终回复必须只包含完整的 index.html 源码，不能有 markdown code fence，不能有解释。',
     '',
     '硬要求：',
-    '- 尽量保留 Gemini 初稿里已经成立的视觉结构、hero、信息带和模块节奏，不要退化成普通博客页。',
+    '- 尽量保留当前初稿里已经成立的视觉结构、hero、信息带和模块节奏，不要退化成普通博客页。',
     '- 必须补强研究动机、数学表示及建模、实验方法与实验设计、实验结果及核心结论、评论、One More Thing。',
     '- 如果 OpenReview 信息存在，要把争议点和 rebuttal 过程说清楚；如果没有，不要伪造。',
     '- 真实页面证据比提取文本更重要。你会收到 evidence manifest，请根据这些页码和图像线索补 Figure/Table 的具体编号、作用与结论。',
@@ -1477,7 +1477,7 @@ async function runCodexHtmlGeneration({
   finalMessagePath,
   promptText,
   attachedPageImages,
-  model = 'gpt-5.4-mini',
+  model = 'gpt-5.4',
   timeoutMs = 120000
 }) {
   const args = [

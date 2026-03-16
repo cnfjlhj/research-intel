@@ -682,8 +682,8 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
   const finalMessagePath = path.join(paperDir, 'codex_final_message.txt');
   const codexStdoutPath = path.join(paperDir, 'codex_stdout.txt');
   const codexStderrPath = path.join(paperDir, 'codex_stderr.txt');
-  const geminiInitialMessagePath = path.join(paperDir, 'gemini_initial_message.txt');
-  const geminiInitialRawPath = path.join(paperDir, 'gemini_initial_raw.json');
+  const initialModelMessagePath = path.join(paperDir, 'initial_model_message.txt');
+  const initialModelRawPath = path.join(paperDir, 'initial_model_raw.txt');
   const enhancementPromptPath = path.join(paperDir, 'codex_enhancement_prompt.md');
   const enhancementMessagePath = path.join(paperDir, 'codex_enhancement_message.txt');
   const enhancementStdoutPath = path.join(paperDir, 'codex_enhancement_stdout.txt');
@@ -776,21 +776,49 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
   });
   writeText(promptPath, `${promptText}\n`);
 
-  const htmlRun = await generateHtmlWithFallbacks({
-    apiBaseUrl: options.htmlApiBaseUrl,
-    apiKey: options.htmlApiKey,
-    models: options.htmlModels,
-    promptText,
-    attachedPageImages,
-    rateLimiter: options.rateLimiter,
-    timeoutMs: options.chatTimeoutMs
-  });
-  const cleanedHtml = cleanHtmlResponse(htmlRun.content);
-  writeText(finalMessagePath, `${htmlRun.content}\n`);
-  writeText(codexStdoutPath, `${htmlRun.raw}\n`);
-  writeText(codexStderrPath, '');
-  writeText(geminiInitialMessagePath, `${htmlRun.content}\n`);
-  writeText(geminiInitialRawPath, `${htmlRun.raw}\n`);
+  let htmlRun;
+  let cleanedHtml = '';
+  if (options.codexHtmlEnhancementEnabled) {
+    const codexRun = await runCodexHtmlGeneration({
+      workingDir: paperDir,
+      targetHtmlPath: htmlPath,
+      finalMessagePath,
+      promptText,
+      attachedPageImages,
+      model: options.codexHtmlModel,
+      timeoutMs: options.codexHtmlTimeoutMs
+    });
+    const rawFinalMessage = fs.existsSync(finalMessagePath) ? fs.readFileSync(finalMessagePath, 'utf8') : codexRun.finalMessage || '';
+    cleanedHtml = cleanHtmlResponse(rawFinalMessage);
+    htmlRun = {
+      model: options.codexHtmlModel,
+      content: rawFinalMessage,
+      raw: codexRun.stdout || '',
+      source: 'codex-direct'
+    };
+    writeText(codexStdoutPath, `${codexRun.stdout || ''}\n`);
+    writeText(codexStderrPath, `${codexRun.stderr || ''}\n`);
+  } else {
+    const legacyRun = await generateHtmlWithFallbacks({
+      apiBaseUrl: options.htmlApiBaseUrl,
+      apiKey: options.htmlApiKey,
+      models: options.htmlModels,
+      promptText,
+      attachedPageImages,
+      rateLimiter: options.rateLimiter,
+      timeoutMs: options.chatTimeoutMs
+    });
+    cleanedHtml = cleanHtmlResponse(legacyRun.content);
+    htmlRun = {
+      ...legacyRun,
+      source: 'legacy-chat-completions'
+    };
+    writeText(finalMessagePath, `${legacyRun.content}\n`);
+    writeText(codexStdoutPath, `${legacyRun.raw}\n`);
+    writeText(codexStderrPath, '');
+  }
+  writeText(initialModelMessagePath, `${htmlRun.content}\n`);
+  writeText(initialModelRawPath, `${htmlRun.raw || ''}\n`);
   writeText(initialHtmlPath, `${cleanedHtml}\n`);
   writeText(htmlPath, `${cleanedHtml}\n`);
 
@@ -809,57 +837,68 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
       reason: 'disabled'
     };
   } else {
-    try {
-      const htmlBeforeEnhancement = fs.readFileSync(htmlPath, 'utf8');
-      const qualityBeforeEnhancement = inspectHtmlQuality(htmlBeforeEnhancement, evidencePages);
-      const codexEvidenceImages = attachedPageImages;
-      const enhancementPrompt = buildHtmlEnhancementPrompt({
-        currentHtml: htmlBeforeEnhancement,
-        paperMetaJson: fs.readFileSync(paperMetaPath, 'utf8'),
-        paperTextPreview: truncateForLlm(fs.readFileSync(paperTextPath, 'utf8'), 22000),
-        openreviewSummary: fs.readFileSync(openreviewSummaryPath, 'utf8'),
-        webCoverageJson: fs.readFileSync(webCoveragePath, 'utf8'),
-        evidenceManifestJson: fs.readFileSync(evidencePagesPath, 'utf8')
-      });
-      writeText(enhancementPromptPath, `${enhancementPrompt}\n`);
-      const enhancementRun = await runCodexHtmlGeneration({
-        workingDir: paperDir,
-        targetHtmlPath: htmlPath,
-        finalMessagePath: enhancementMessagePath,
-        promptText: enhancementPrompt,
-        attachedPageImages: codexEvidenceImages,
-        model: options.codexHtmlModel,
-        timeoutMs: options.codexHtmlTimeoutMs
-      });
-      writeText(enhancementStdoutPath, `${enhancementRun.stdout || ''}\n`);
-      writeText(enhancementStderrPath, `${enhancementRun.stderr || ''}\n`);
-      const htmlAfterEnhancement = fs.readFileSync(htmlPath, 'utf8');
-      const qualityAfterEnhancement = inspectHtmlQuality(htmlAfterEnhancement, evidencePages);
-      const changed = normalizeHtmlForAudit(htmlAfterEnhancement) !== normalizeHtmlForAudit(htmlBeforeEnhancement);
-      codexEnhancement = {
-        ok: true,
-        enabled: true,
-        model: options.codexHtmlModel,
-        timeoutMs: options.codexHtmlTimeoutMs,
-        changed,
-        attachedImageCount: codexEvidenceImages.length,
-        finalMessagePath: enhancementMessagePath,
-        promptPath: enhancementPromptPath,
-        stdoutPath: enhancementStdoutPath,
-        stderrPath: enhancementStderrPath,
-        qualityBefore: qualityBeforeEnhancement,
-        qualityAfter: qualityAfterEnhancement
-      };
-    } catch (error) {
-      writeText(enhancementStderrPath, `${error.stack || error.message}\n`);
+    const shouldRunEnhancementPass = htmlRun.source !== 'codex-direct';
+    if (!shouldRunEnhancementPass) {
       codexEnhancement = {
         ok: false,
         enabled: true,
         model: options.codexHtmlModel,
-        timeoutMs: options.codexHtmlTimeoutMs,
-        attachedImageCount: attachedPageImages.length,
-        error: error.message
+        skipped: true,
+        reason: 'codex_primary_generation'
       };
+    } else {
+      try {
+        const htmlBeforeEnhancement = fs.readFileSync(htmlPath, 'utf8');
+        const qualityBeforeEnhancement = inspectHtmlQuality(htmlBeforeEnhancement, evidencePages);
+        const codexEvidenceImages = attachedPageImages;
+        const enhancementPrompt = buildHtmlEnhancementPrompt({
+          currentHtml: htmlBeforeEnhancement,
+          paperMetaJson: fs.readFileSync(paperMetaPath, 'utf8'),
+          paperTextPreview: truncateForLlm(fs.readFileSync(paperTextPath, 'utf8'), 22000),
+          openreviewSummary: fs.readFileSync(openreviewSummaryPath, 'utf8'),
+          webCoverageJson: fs.readFileSync(webCoveragePath, 'utf8'),
+          evidenceManifestJson: fs.readFileSync(evidencePagesPath, 'utf8')
+        });
+        writeText(enhancementPromptPath, `${enhancementPrompt}\n`);
+        const enhancementRun = await runCodexHtmlGeneration({
+          workingDir: paperDir,
+          targetHtmlPath: htmlPath,
+          finalMessagePath: enhancementMessagePath,
+          promptText: enhancementPrompt,
+          attachedPageImages: codexEvidenceImages,
+          model: options.codexHtmlModel,
+          timeoutMs: options.codexHtmlTimeoutMs
+        });
+        writeText(enhancementStdoutPath, `${enhancementRun.stdout || ''}\n`);
+        writeText(enhancementStderrPath, `${enhancementRun.stderr || ''}\n`);
+        const htmlAfterEnhancement = fs.readFileSync(htmlPath, 'utf8');
+        const qualityAfterEnhancement = inspectHtmlQuality(htmlAfterEnhancement, evidencePages);
+        const changed = normalizeHtmlForAudit(htmlAfterEnhancement) !== normalizeHtmlForAudit(htmlBeforeEnhancement);
+        codexEnhancement = {
+          ok: true,
+          enabled: true,
+          model: options.codexHtmlModel,
+          timeoutMs: options.codexHtmlTimeoutMs,
+          changed,
+          attachedImageCount: codexEvidenceImages.length,
+          finalMessagePath: enhancementMessagePath,
+          promptPath: enhancementPromptPath,
+          stdoutPath: enhancementStdoutPath,
+          stderrPath: enhancementStderrPath,
+          qualityBefore: qualityBeforeEnhancement,
+          qualityAfter: qualityAfterEnhancement
+        };
+      } catch (error) {
+        writeText(enhancementStderrPath, `${error.stack || error.message}\n`);
+        codexEnhancement = {
+          ok: false,
+          enabled: true,
+          model: options.codexHtmlModel,
+          timeoutMs: options.codexHtmlTimeoutMs,
+          attachedImageCount: attachedPageImages.length,
+          error: error.message
+        };
+      }
     }
   }
   writeJson(enhancementMetaPath, codexEnhancement);
@@ -893,19 +932,45 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
       const repairScreenshotPath = path.join(repairDir, `attempt-${attempt}.png`);
       writeText(repairPromptPath, `${repairPrompt}\n`);
 
-      const repairRun = await generateHtmlWithFallbacks({
-        apiBaseUrl: options.htmlApiBaseUrl,
-        apiKey: options.htmlApiKey,
-        models: options.htmlModels,
-        promptText: repairPrompt,
-        attachedPageImages,
-        rateLimiter: options.rateLimiter,
-        maxAttemptsPerModel: 1,
-        timeoutMs: options.chatTimeoutMs
-      });
-      const repairedHtml = cleanHtmlResponse(repairRun.content);
+      let repairRun;
+      let repairedHtml = '';
+      if (options.codexHtmlEnhancementEnabled) {
+        const codexRepairRun = await runCodexHtmlGeneration({
+          workingDir: paperDir,
+          targetHtmlPath: htmlPath,
+          finalMessagePath: repairResponsePath,
+          promptText: repairPrompt,
+          attachedPageImages,
+          model: options.codexHtmlModel,
+          timeoutMs: options.codexHtmlTimeoutMs
+        });
+        const repairMessage = fs.existsSync(repairResponsePath) ? fs.readFileSync(repairResponsePath, 'utf8') : codexRepairRun.finalMessage || '';
+        repairRun = {
+          model: options.codexHtmlModel,
+          content: repairMessage,
+          raw: codexRepairRun.stdout || '',
+          source: 'codex-repair'
+        };
+        repairedHtml = cleanHtmlResponse(repairMessage);
+      } else {
+        const legacyRepairRun = await generateHtmlWithFallbacks({
+          apiBaseUrl: options.htmlApiBaseUrl,
+          apiKey: options.htmlApiKey,
+          models: options.htmlModels,
+          promptText: repairPrompt,
+          attachedPageImages,
+          rateLimiter: options.rateLimiter,
+          maxAttemptsPerModel: 1,
+          timeoutMs: options.chatTimeoutMs
+        });
+        repairRun = {
+          ...legacyRepairRun,
+          source: 'legacy-chat-completions'
+        };
+        repairedHtml = cleanHtmlResponse(legacyRepairRun.content);
+      }
       writeText(repairResponsePath, `${repairRun.content}\n`);
-      writeText(repairRawPath, `${repairRun.raw}\n`);
+      writeText(repairRawPath, `${repairRun.raw || ''}\n`);
       writeText(
         htmlPath,
         `${injectEvidenceGallery(replaceFigurePlaceholdersWithEvidence(repairedHtml, evidencePages), evidencePages)}\n`
@@ -1014,6 +1079,7 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     attachedPageImageCount: attachedPageImages.length,
     evidencePagesPath,
     generationModel: htmlRun.model,
+    generationSource: htmlRun.source,
     codexEnhancement,
     generationPromptPath: promptPath,
     codexFinalMessagePath: finalMessagePath,
@@ -1098,8 +1164,9 @@ async function main() {
     rootDir: ROOT_DIR,
     profileDir: options.profileDir
   });
-  if (!options.htmlApiBaseUrl || !options.htmlApiKey || options.htmlModels.length === 0) {
-    throw new Error('Missing RESEARCH_INTEL_API_BASE_URL / RESEARCH_INTEL_API_KEY / RESEARCH_INTEL_HTML_MODELS runtime configuration.');
+  const usingLegacyChatHtmlPath = !options.codexHtmlEnhancementEnabled;
+  if (usingLegacyChatHtmlPath && (!options.htmlApiBaseUrl || !options.htmlApiKey || options.htmlModels.length === 0)) {
+    throw new Error('Missing runtime configuration: keep RESEARCH_INTEL_CODEX_HTML_MODEL enabled for Codex-first HTML generation, or explicitly clear it and provide RESEARCH_INTEL_API_BASE_URL / RESEARCH_INTEL_API_KEY / RESEARCH_INTEL_HTML_MODELS for the legacy path.');
   }
 
   const profile = loadProfile(options.profileDir);
@@ -1275,7 +1342,7 @@ async function main() {
       published: paper.published,
       htmlPath: repoRelativePath(paper.htmlPath),
       artifactDir: repoRelativePath(paper.artifactDir),
-      generationMethod: paper.codexEnhancement?.ok ? 'gemini-draft+codex-enhance' : 'chat-completions',
+      generationMethod: paper.generationSource || (paper.codexEnhancement?.ok ? 'legacy-chat+codex-enhance' : 'legacy-chat-completions'),
       generationModel: paper.generationModel,
       codexEnhancement: paper.codexEnhancement,
       pageImageCount: paper.pageImageCount,
