@@ -65,6 +65,8 @@ const DEFAULT_RECORDS_DIR = path.join(ROOT_DIR, 'research-intel-records');
 const DEFAULT_HISTORY_DIR = path.join(DEFAULT_RECORDS_DIR, 'history');
 const DEFAULT_RUNTIME_ENV_PATH = path.join(DEFAULT_PROFILE_DIR, 'runtime.env');
 const USER_AGENT = 'research-intel-bot/0.1 (+local)';
+const DEFAULT_HTML_TEXT_PREVIEW_LIMIT = 16000;
+const DEFAULT_HTML_EVIDENCE_IMAGE_LIMIT = 6;
 
 function parseArgs(argv) {
   const options = {
@@ -753,7 +755,7 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
   };
   extractPdfText(paperPdfPath, paperTextPath);
   const extractedText = fs.readFileSync(paperTextPath, 'utf8');
-  writeText(paperTextPreviewPath, truncateForLlm(extractedText));
+  writeText(paperTextPreviewPath, truncateForLlm(extractedText, DEFAULT_HTML_TEXT_PREVIEW_LIMIT));
   const pageImages = renderPdfPagesToImages({
     pdfPath: paperPdfPath,
     outputDir: pageImagesDir
@@ -762,7 +764,7 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     pdfPath: paperPdfPath,
     pageImages,
     textOutputDir: pageTextsDir,
-    maxImages: 8
+    maxImages: DEFAULT_HTML_EVIDENCE_IMAGE_LIMIT
   });
   const attachedPageImages = evidencePages.map(entry => entry.imagePath);
   const evidenceManifest = buildEvidenceManifest(evidencePages);
