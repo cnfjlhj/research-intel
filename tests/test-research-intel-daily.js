@@ -11,6 +11,7 @@ const {
 } = require('../scripts/research-intel/lib/daily');
 const {
   minimumArtifactCount,
+  resolveRuntimeModelConfig,
   selectForToday,
   splitDailyPicks
 } = require('../scripts/research-intel/daily-run');
@@ -230,6 +231,19 @@ test('minimumArtifactCount accepts a smaller high-quality batch when strict filt
   });
 
   assert.equal(required, 2);
+});
+
+test('resolveRuntimeModelConfig does not silently reuse HTML models for curation', () => {
+  const config = resolveRuntimeModelConfig({
+    RESEARCH_INTEL_API_BASE_URL: 'https://example.com/v1/chat/completions',
+    RESEARCH_INTEL_API_KEY: 'secret',
+    RESEARCH_INTEL_HTML_MODELS: 'legacy-a, legacy-b',
+    RESEARCH_INTEL_CHAT_TIMEOUT_MS: '45000'
+  });
+
+  assert.deepEqual(config.htmlModels, ['legacy-a', 'legacy-b']);
+  assert.deepEqual(config.curationModels, []);
+  assert.equal(config.chatTimeoutMs, 45000);
 });
 
 test('splitDailyPicks keeps must-read strict and fills a separate watchlist from nearby candidates', () => {

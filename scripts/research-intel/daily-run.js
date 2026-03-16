@@ -124,6 +124,31 @@ function parseArgs(argv) {
   return options;
 }
 
+function parseEnvList(value) {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function resolveRuntimeModelConfig(env = process.env) {
+  const configuredChatTimeoutMs = Number(env.RESEARCH_INTEL_CHAT_TIMEOUT_MS || '60000');
+  const codexEnhancementConfig = resolveCodexEnhancementConfig(env);
+
+  return {
+    htmlApiBaseUrl: env.RESEARCH_INTEL_API_BASE_URL || '',
+    htmlApiKey: env.RESEARCH_INTEL_API_KEY || '',
+    htmlModels: parseEnvList(env.RESEARCH_INTEL_HTML_MODELS),
+    curationModels: parseEnvList(env.RESEARCH_INTEL_CURATION_MODELS),
+    chatTimeoutMs: Number.isFinite(configuredChatTimeoutMs) && configuredChatTimeoutMs > 0
+      ? configuredChatTimeoutMs
+      : 60000,
+    codexHtmlEnhancementEnabled: codexEnhancementConfig.enabled,
+    codexHtmlModel: codexEnhancementConfig.model,
+    codexHtmlTimeoutMs: codexEnhancementConfig.timeoutMs
+  };
+}
+
 function ensureDir(targetDir) {
   fs.mkdirSync(targetDir, { recursive: true });
 }
@@ -1141,24 +1166,7 @@ function packageTelegramArtifacts(runPaths, artifactPapers) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   loadRuntimeEnv(options.runtimeEnvPath);
-  options.htmlApiBaseUrl = process.env.RESEARCH_INTEL_API_BASE_URL || '';
-  options.htmlApiKey = process.env.RESEARCH_INTEL_API_KEY || '';
-  options.htmlModels = (process.env.RESEARCH_INTEL_HTML_MODELS || '')
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean);
-  options.curationModels = (process.env.RESEARCH_INTEL_CURATION_MODELS || process.env.RESEARCH_INTEL_HTML_MODELS || '')
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean);
-  const configuredChatTimeoutMs = Number(process.env.RESEARCH_INTEL_CHAT_TIMEOUT_MS || '60000');
-  options.chatTimeoutMs = Number.isFinite(configuredChatTimeoutMs) && configuredChatTimeoutMs > 0
-    ? configuredChatTimeoutMs
-    : 60000;
-  const codexEnhancementConfig = resolveCodexEnhancementConfig(process.env);
-  options.codexHtmlEnhancementEnabled = codexEnhancementConfig.enabled;
-  options.codexHtmlModel = codexEnhancementConfig.model;
-  options.codexHtmlTimeoutMs = codexEnhancementConfig.timeoutMs;
+  Object.assign(options, resolveRuntimeModelConfig(process.env));
   options.rateLimiter = new MinuteRateLimiter(Number(process.env.RESEARCH_INTEL_RATE_LIMIT_PER_MINUTE || '5'));
   options.htmlTemplate = resolveHtmlTemplateReference({
     rootDir: ROOT_DIR,
@@ -1536,6 +1544,7 @@ if (require.main === module) {
 module.exports = {
   desiredPaperCount,
   minimumArtifactCount,
+  resolveRuntimeModelConfig,
   scoreCandidates,
   selectForToday,
   splitDailyPicks
