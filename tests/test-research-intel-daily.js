@@ -10,8 +10,12 @@ const {
   decorateSelectedPapers
 } = require('../scripts/research-intel/lib/daily');
 const {
+  DEFAULT_HTML_GENERATION_MAX_ATTEMPTS,
+  buildPaperHtmlAttemptPaths,
+  parseArgs,
   minimumArtifactCount,
   resolveRuntimeModelConfig,
+  shouldLoadProjectEnv,
   selectForToday,
   splitDailyPicks
 } = require('../scripts/research-intel/daily-run');
@@ -41,6 +45,41 @@ test('buildRecordPaths creates tracked record layout separate from heavy run out
   assert.equal(paths.knowledgeDir, '/tmp/research-intel-records/knowledge');
   assert.equal(paths.methodTreeJsonPath, '/tmp/research-intel-records/knowledge/method_tree.json');
   assert.equal(paths.methodTreeMarkdownPath, '/tmp/research-intel-records/knowledge/method_tree.md');
+});
+
+test('buildPaperHtmlAttemptPaths keeps per-attempt paper artifacts isolated under generation_attempts', () => {
+  const paths = buildPaperHtmlAttemptPaths('/tmp/research-intel/papers/01-demo', 2);
+
+  assert.equal(DEFAULT_HTML_GENERATION_MAX_ATTEMPTS, 2);
+  assert.equal(paths.attemptLabel, 'attempt-02');
+  assert.equal(paths.attemptDir, '/tmp/research-intel/papers/01-demo/generation_attempts/attempt-02');
+  assert.equal(paths.htmlPath, '/tmp/research-intel/papers/01-demo/generation_attempts/attempt-02/index.html');
+  assert.equal(paths.finalMessagePath, '/tmp/research-intel/papers/01-demo/generation_attempts/attempt-02/codex_final_message.txt');
+  assert.equal(paths.htmlValidationPath, '/tmp/research-intel/papers/01-demo/generation_attempts/attempt-02/html_validation.json');
+  assert.equal(paths.standaloneValidationPath, '/tmp/research-intel/papers/01-demo/generation_attempts/attempt-02/standalone_validation.json');
+});
+
+test('parseArgs binds runtime.env to the selected profile directory unless explicitly overridden', () => {
+  const parsed = parseArgs([
+    '--profile-dir', '/tmp/custom-profile'
+  ]);
+  assert.equal(parsed.profileDir, '/tmp/custom-profile');
+  assert.equal(parsed.runtimeEnvPath, '/tmp/custom-profile/runtime.env');
+  assert.equal(parsed.profileDirExplicit, true);
+  assert.equal(parsed.runtimeEnvExplicit, false);
+
+  const explicit = parseArgs([
+    '--profile-dir', '/tmp/custom-profile',
+    '--runtime-env', '/tmp/elsewhere/runtime.env'
+  ]);
+  assert.equal(explicit.runtimeEnvPath, '/tmp/elsewhere/runtime.env');
+  assert.equal(explicit.runtimeEnvExplicit, true);
+});
+
+test('shouldLoadProjectEnv keeps the repo .env for the default profile only', () => {
+  assert.equal(shouldLoadProjectEnv(parseArgs([])), true);
+  assert.equal(shouldLoadProjectEnv(parseArgs(['--profile-dir', '/tmp/custom-profile'])), false);
+  assert.equal(shouldLoadProjectEnv(parseArgs(['--runtime-env', '/tmp/custom/runtime.env'])), false);
 });
 
 test('decorateSelectedPapers adds recommendation reasons, anchor links, and reading order text', () => {
@@ -244,6 +283,12 @@ test('resolveRuntimeModelConfig does not silently reuse HTML models for curation
   assert.deepEqual(config.htmlModels, ['legacy-a', 'legacy-b']);
   assert.deepEqual(config.curationModels, []);
   assert.equal(config.chatTimeoutMs, 45000);
+});
+
+test('resolveRuntimeModelConfig inherits the baohe-safe Codex HTML timeout default', () => {
+  const config = resolveRuntimeModelConfig({});
+
+  assert.equal(config.codexHtmlTimeoutMs, 600000);
 });
 
 test('splitDailyPicks keeps must-read strict and fills a separate watchlist from nearby candidates', () => {

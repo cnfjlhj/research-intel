@@ -1,16 +1,59 @@
 #!/usr/bin/env node
 
+const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { pathToFileURL } = require('url');
+const { fileURLToPath, pathToFileURL } = require('url');
 const { spawnSync } = require('child_process');
 const puppeteer = require('puppeteer-core');
-const { runCommandWithTimeout } = require('./process-runner');
+const {
+  DEFAULT_CODEX_HTML_MODEL,
+  DEFAULT_CODEX_HTML_REASONING_EFFORT,
+  DEFAULT_CODEX_HTML_TIMEOUT_MS
+} = require('./codex-enhancement-config');
 
 const KATEX_VERSION = '0.16.9';
 const KATEX_PRIMARY_BASE_URL = `https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist`;
 const KATEX_FALLBACK_BASE_URL = `https://unpkg.com/katex@${KATEX_VERSION}/dist`;
 const BUNDLED_KATEX_ASSET_DIR = path.join(__dirname, '..', 'assets', 'katex');
+const DETACHED_COMMAND_RUNNER_PATH = path.join(__dirname, 'detached-command-runner.js');
+const TMUX_SESSION_NAME_LIMIT = 64;
+const TMUX_POLL_INTERVAL_MS = 1000;
+const TMUX_ENV_EXACT_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_DATA_HOME',
+  'http_proxy',
+  'https_proxy',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'no_proxy',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'all_proxy',
+  'GGBOOM_API_KEY',
+  'CODEX_HOME',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'REQUESTS_CA_BUNDLE',
+  'CURL_CA_BUNDLE'
+]);
+const TMUX_ENV_PREFIX_PATTERNS = [
+  /^(OPENAI|ANTHROPIC|AZURE_OPENAI|GOOGLE|GEMINI|OPENROUTER|DEEPSEEK|MISTRAL|XAI|CEREBRAS|TOGETHER|FIREWORKS|PERPLEXITY|GROQ|OLLAMA)_(API_KEY|BASE_URL|BASE_URI|ENDPOINT|API_BASE)$/i,
+  /^(OPENAI_(ORGANIZATION|PROJECT)|AZURE_OPENAI_API_VERSION)$/i,
+  /^(CODEX|AWS|BEDROCK)_[A-Z0-9_]+$/i
+];
 const REQUIRED_VISIBLE_HEADINGS = [
   '研究动机',
   '数学表示及建模',
@@ -20,6 +63,8 @@ const REQUIRED_VISIBLE_HEADINGS = [
   'Rebuttal 过程（如果有）',
   'One More Thing'
 ];
+const DEFAULT_REPAIR_PROMPT_HTML_PREVIEW_MAX_CHARS = 160000;
+const REPAIR_PROMPT_HTML_PREVIEW_TRUNCATION_NOTE = '<!-- current html preview truncated for repair prompt; read the current HTML file path above for the full document -->';
 
 function escapeHtml(value) {
   return String(value || '')
@@ -138,8 +183,153 @@ function naturalCompare(left, right) {
   return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
 }
 
+function ensureDir(targetDir) {
+  fs.mkdirSync(targetDir, { recursive: true });
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function shellQuote(value) {
+  return `'${String(value || '').replace(/'/g, `'\\''`)}'`;
+}
+
+function sanitizeSessionSegment(value, maxLength = 18) {
+  const normalized = String(value || '')
+    .replace(/\.(response|message|raw)$/i, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-')
+    .toLowerCase();
+
+  if (!normalized) {
+    return 'run';
+  }
+
+  return normalized.slice(0, maxLength).replace(/-+$/g, '') || 'run';
+}
+
+function shortStableHash(...parts) {
+  return crypto.createHash('sha1').update(parts.join('|'), 'utf8').digest('hex').slice(0, 8);
+}
+
 function resolveAttachedPageImages(imagePaths) {
   return [...imagePaths].sort(naturalCompare);
+}
+
+function buildCodexHtmlTmuxSessionName({
+  workingDir,
+  targetHtmlPath,
+  finalMessagePath
+}) {
+  const paperSegment = sanitizeSessionSegment(path.basename(workingDir || ''), 16);
+  const phaseSegment = sanitizeSessionSegment(path.basename(finalMessagePath || '', path.extname(finalMessagePath || '')), 16);
+  const hash = shortStableHash(workingDir, targetHtmlPath, finalMessagePath);
+  const sessionName = `research-intel-html-${paperSegment}-${phaseSegment}-${hash}`;
+  if (sessionName.length <= TMUX_SESSION_NAME_LIMIT) {
+    return sessionName;
+  }
+
+  const overflow = sessionName.length - TMUX_SESSION_NAME_LIMIT;
+  const trimmedPaperSegment = paperSegment.slice(0, Math.max(6, paperSegment.length - overflow));
+  return `research-intel-html-${trimmedPaperSegment}-${phaseSegment}-${hash}`.slice(0, TMUX_SESSION_NAME_LIMIT);
+}
+
+function buildCodexHtmlTmuxRunPaths({
+  workingDir,
+  targetHtmlPath,
+  finalMessagePath
+}) {
+  const phaseSegment = sanitizeSessionSegment(path.basename(finalMessagePath || '', path.extname(finalMessagePath || '')), 28);
+  const hash = shortStableHash(workingDir, targetHtmlPath, finalMessagePath);
+  const runtimeDir = path.join(workingDir, '.codex-html-runs', `${phaseSegment}-${hash}`);
+
+  return {
+    runtimeDir,
+    promptPath: path.join(runtimeDir, 'prompt.md'),
+    configPath: path.join(runtimeDir, 'runner-config.json'),
+    statusPath: path.join(runtimeDir, 'status.json'),
+    stdoutPath: path.join(runtimeDir, 'stdout.log'),
+    stderrPath: path.join(runtimeDir, 'stderr.log'),
+    paneCapturePath: path.join(runtimeDir, 'pane.txt')
+  };
+}
+
+function buildCodexHtmlTmuxLaunchCommand({
+  workingDir,
+  runnerScriptPath = DETACHED_COMMAND_RUNNER_PATH,
+  configPath
+}) {
+  return [
+    `cd ${shellQuote(workingDir)}`,
+    `exec ${shellQuote(process.execPath)} ${shellQuote(runnerScriptPath)} ${shellQuote(configPath)}`
+  ].join('\n');
+}
+
+function buildCodexHtmlTmuxEnvEntries(env = process.env) {
+  return Object.keys(env)
+    .filter(key => {
+      if (!Object.prototype.hasOwnProperty.call(env, key)) {
+        return false;
+      }
+      if (TMUX_ENV_EXACT_KEYS.has(key)) {
+        return true;
+      }
+      return TMUX_ENV_PREFIX_PATTERNS.some(pattern => pattern.test(key));
+    })
+    .sort()
+    .flatMap(key => {
+      const value = env[key];
+      if (value === undefined || value === null || value === '') {
+        return [];
+      }
+      if (/[\r\n]/.test(String(value))) {
+        return [];
+      }
+      return [`${key}=${value}`];
+    });
+}
+
+function tmuxSessionExists(sessionName) {
+  const result = spawnSync('tmux', ['has-session', '-t', sessionName], {
+    encoding: 'utf8'
+  });
+  return result.status === 0;
+}
+
+function tmux(args) {
+  const result = spawnSync('tmux', args, {
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) {
+    throw new Error(`tmux ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
+  }
+  return result.stdout || '';
+}
+
+function captureTmuxPane(sessionName) {
+  if (!tmuxSessionExists(sessionName)) {
+    return '';
+  }
+  return tmux(['capture-pane', '-t', sessionName, '-p']);
+}
+
+function killTmuxSession(sessionName) {
+  const result = spawnSync('tmux', ['kill-session', '-t', sessionName], {
+    encoding: 'utf8'
+  });
+  if (result.status !== 0 && tmuxSessionExists(sessionName)) {
+    throw new Error(`Failed to kill tmux session ${sessionName}: ${result.stderr || result.stdout}`);
+  }
+}
+
+function readJsonIfExists(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
 function scoreEvidencePage(text) {
@@ -256,6 +446,50 @@ function buildEvidenceManifest(evidencePages = []) {
   }));
 }
 
+function buildPaperWorkspaceSourceLines({
+  paperPdfPath = '',
+  paperMetaPath = '',
+  paperTextPath = '',
+  paperTextPreviewPath = '',
+  openreviewSummaryPath = '',
+  pageImagesDir = '',
+  pageTextsDir = ''
+} = {}) {
+  const lines = [
+    '你可以读取当前论文工作目录里的这些本地文件与目录：'
+  ];
+
+  if (paperPdfPath) {
+    lines.push(`- 论文 PDF（唯一真相来源）: ${paperPdfPath}`);
+  }
+  if (paperMetaPath) {
+    lines.push(`- 论文元信息 JSON: ${paperMetaPath}`);
+  }
+  if (paperTextPath) {
+    lines.push(`- 论文全文文本抽取（仅辅助定位）: ${paperTextPath}`);
+  }
+  if (paperTextPreviewPath) {
+    lines.push(`- 论文文本预览（仅辅助快速定位）: ${paperTextPreviewPath}`);
+  }
+  if (openreviewSummaryPath) {
+    lines.push(`- OpenReview 摘要: ${openreviewSummaryPath}`);
+  }
+  if (pageImagesDir) {
+    lines.push(`- PDF 页面图像目录（辅助证据）: ${pageImagesDir}`);
+  }
+  if (pageTextsDir) {
+    lines.push(`- PDF 分页文本目录（辅助定位）: ${pageTextsDir}`);
+  }
+
+  lines.push('- 只处理当前这篇论文；不要跨到其他论文目录，也不要复用其他论文上下文。');
+  lines.push('- 允许使用当前工作目录里的本地只读工具检查这些材料，但不要修改任何输入材料。');
+  lines.push('- paper.pdf 是唯一真相来源。');
+  lines.push('- 如果辅助材料与 paper.pdf 冲突，以 paper.pdf 为准。');
+  lines.push('- 页面图像、全文抽取文本和文本预览都只能辅助定位与核对，不能替代你对 paper.pdf 的判断。');
+
+  return lines;
+}
+
 function buildCodexHtmlPrompt({
   templatePath,
   targetHtmlPath,
@@ -331,9 +565,16 @@ function buildCodexHtmlPrompt({
 
 function buildCodexInlineHtmlPrompt({
   templateHtml,
+  paperPdfPath,
+  paperMetaPath,
   paperMetaJson,
+  paperTextPath,
+  paperTextPreviewPath,
   paperTextPreview,
+  openreviewSummaryPath,
   openreviewSummary,
+  pageImagesDir,
+  pageTextsDir,
   pageImageCount
 }) {
   const templateReference = buildTemplateDesignReference(templateHtml);
@@ -355,19 +596,30 @@ function buildCodexInlineHtmlPrompt({
     '- One More Thing：任何你认为真正重要、值得额外讲给我听的内容。',
     '',
     '这次的工程化附加约束如下：',
-    '不要运行 shell，不要读仓库里的其他文件；你只基于本条消息给你的材料和 attached images 完成任务。',
+    ...buildPaperWorkspaceSourceLines({
+      paperPdfPath,
+      paperMetaPath,
+      paperTextPath,
+      paperTextPreviewPath,
+      openreviewSummaryPath,
+      pageImagesDir,
+      pageTextsDir
+    }),
     '最终回复必须只包含完整的 index.html 源码，不能有 markdown code fence，不能有前言后记。',
     '不要调用任何额外模型，不要把输出退化成解释性文本。',
     '',
     '证据优先级：',
-    '1. attached images / 论文 PDF 页面图像',
-    '2. 论文元信息与正文提取文本',
-    '3. OpenReview / rebuttal / review thread（如果有）',
-    '4. 其他外部材料（如果有）',
+    '1. paper.pdf',
+    '2. attached images / 论文 PDF 页面图像',
+    '3. 论文元信息与正文提取文本',
+    '4. OpenReview / rebuttal / review thread（如果有）',
+    '5. 其他外部材料（如果有）',
     '',
     '强要求：',
+    '- 你必须先阅读并以 paper.pdf 为唯一真相来源。',
     '- attached images 是论文 PDF 的关键页面图像证据，你必须认真查看，用它们判断 figure/table/算法框/实验页的内容。',
     '- 不得只依赖提取文本；文本只作为辅助。',
+    '- 如果 paper.pdf 尚未直接覆盖到某个细节，可以用页面图像、分页文本或全文抽取辅助定位，但最终表述必须回到 paper.pdf。',
     '- 如果你不确定某个数字、表格项或 figure 细节，要明确标注“不确定”，不要编造。',
     '- 如果论文没有 OpenReview / rebuttal 信息，不要伪造该部分。',
     '- 必须使用 KaTeX 支持数学渲染。',
@@ -422,12 +674,16 @@ function buildCodexInlineHtmlPrompt({
 }
 
 function buildHtmlRepairPrompt({
+  paperPdfPath = '',
+  paperTextPath = '',
+  currentHtmlPath = '',
   currentHtml,
   validationReport,
   paperMetaJson,
   openreviewSummary,
   paperTextPreview
 }) {
+  const repairHtmlPreview = buildRepairPromptHtmlPreview(currentHtml);
   return [
     '你现在是在修补一份已经生成过的 index.html。',
     '这不是从零生成；你必须基于当前 HTML 修改，使其通过本地浏览器验收。',
@@ -447,6 +703,11 @@ function buildHtmlRepairPrompt({
     '- 如果论文没有 OpenReview / rebuttal 信息，不要为了凑结构硬写一大段不存在的审稿讨论。',
     '- KaTeX 仍然必须保留。',
     '- 评论部分仍然要有洞见，不能在修补时被你删成客套话。',
+    '- 末尾自动注入的论文页面证据图库会在修补后重新补回；不要机械复制那一大段 base64 图库。',
+    '- 修补时仍然以 paper.pdf 是唯一真相来源；如果当前 HTML、文本预览和 PDF 冲突，以 PDF 为准。',
+    ...(paperPdfPath ? [`- 当前论文 PDF: ${paperPdfPath}`] : []),
+    ...(paperTextPath ? [`- 当前论文全文文本抽取（仅辅助）: ${paperTextPath}`] : []),
+    ...(currentHtmlPath ? [`- 当前 HTML 文件路径: ${currentHtmlPath}`] : []),
     '- 可见标题（h1/h2/h3）中必须直接出现这些字样：',
     ...REQUIRED_VISIBLE_HEADINGS.map(item => `  - ${item}`),
     '',
@@ -470,11 +731,43 @@ function buildHtmlRepairPrompt({
     paperTextPreview,
     '```',
     '',
-    '当前 HTML 如下：',
+    '当前 HTML 精简预览如下：',
+    '为避免 repair prompt 超长，下面这份预览已经省略系统自动注入的证据图库，并把 data URL 图片替换成短占位。',
+    '如果你需要完整 HTML，请直接读取上面的当前 HTML 文件路径。',
     '```html',
-    currentHtml,
+    repairHtmlPreview,
     '```'
   ].join('\n');
+}
+
+function stripResearchIntelEvidenceGalleryForPrompt(html) {
+  return String(html || '')
+    .replace(/<style\b[^>]*data-research-intel-evidence-gallery[^>]*>[\s\S]*?<\/style>\s*/gi, '')
+    .replace(
+      /<section\b[^>]*data-research-intel-evidence-gallery[^>]*>[\s\S]*?<\/section>\s*/gi,
+      '\n<!-- research-intel evidence gallery omitted from repair prompt preview; the pipeline re-injects it after repair -->\n'
+    );
+}
+
+function replaceEmbeddedDataUrlsForPrompt(html) {
+  return String(html || '').replace(/data:[^"')\s>]+/gi, 'data:embedded-asset-omitted-for-repair-prompt');
+}
+
+function buildRepairPromptHtmlPreview(currentHtml, maxChars = DEFAULT_REPAIR_PROMPT_HTML_PREVIEW_MAX_CHARS) {
+  const normalized = replaceEmbeddedDataUrlsForPrompt(
+    stripResearchIntelEvidenceGalleryForPrompt(currentHtml)
+  )
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const note = `\n${REPAIR_PROMPT_HTML_PREVIEW_TRUNCATION_NOTE}\n`;
+  const headLength = Math.max(0, Math.floor(maxChars * 0.65));
+  const tailLength = Math.max(0, maxChars - headLength - note.length);
+  return `${normalized.slice(0, headLength)}${note}${normalized.slice(normalized.length - tailLength)}`.trim();
 }
 
 function buildHtmlEnhancementPrompt({
@@ -1005,8 +1298,17 @@ function inferEvidenceCaption(entry) {
 
 function imageMimeType(imagePath) {
   const normalized = String(imagePath || '').toLowerCase();
+  if (normalized.endsWith('.avif')) {
+    return 'image/avif';
+  }
+  if (normalized.endsWith('.gif')) {
+    return 'image/gif';
+  }
   if (normalized.endsWith('.png')) {
     return 'image/png';
+  }
+  if (normalized.endsWith('.svg')) {
+    return 'image/svg+xml';
   }
   if (normalized.endsWith('.webp')) {
     return 'image/webp';
@@ -1063,11 +1365,41 @@ function injectEvidenceGallery(html, evidencePages = []) {
 
 function findPlaceholderMarkers(html) {
   const searchable = String(html || '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
     .replace(/data:[^"')\s>]+/gi, 'data:embedded-asset');
-  return [...new Set(
-    [...searchable.matchAll(/(?:placeholder|TODO|待补|占位|lorem ipsum)/gi)]
-      .map(match => match[0])
-  )];
+  const markers = new Set();
+  const markerPattern = /(placeholder|TODO|待补|占位|lorem ipsum)/i;
+  const shortChunkPattern = /^(?:placeholder|TODO|待补|占位|lorem ipsum)(?:\b|[:：\s-].*)?$/i;
+
+  for (const match of searchable.matchAll(/<!--[\s\S]*?(placeholder|TODO|待补|占位|lorem ipsum)[\s\S]*?-->/gi)) {
+    markers.add(match[1]);
+  }
+
+  for (const match of searchable.matchAll(/\b(?:id|class|alt|title|aria-label|data-[\w-]+)\s*=\s*["'][^"']*(placeholder|TODO|待补|占位|lorem ipsum)[^"']*["']/gi)) {
+    markers.add(match[1]);
+  }
+
+  const visibleChunks = searchable
+    .replace(/<\/(?:p|li|h[1-6]|div|section|article|aside|figure|figcaption|blockquote|td|th|pre|code)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .split(/\n+/)
+    .map(chunk => chunk.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  for (const chunk of visibleChunks) {
+    const match = chunk.match(markerPattern);
+    if (!match) {
+      continue;
+    }
+    const wordCount = chunk.split(/\s+/).filter(Boolean).length;
+    if (shortChunkPattern.test(chunk) || (chunk.length <= 40 && wordCount <= 6)) {
+      markers.add(match[1]);
+    }
+  }
+
+  return [...markers];
 }
 
 function buildInlineEvidenceCard(entry, label = '') {
@@ -1158,44 +1490,290 @@ function inspectHtmlQuality(html, evidencePages = []) {
 }
 
 function rewriteHtmlToLocalKatexAssets(html, assetBasePath = 'assets/katex') {
-  const replacements = [
-    [`${KATEX_PRIMARY_BASE_URL}/katex.min.css`, `${assetBasePath}/katex.min.css`],
-    [`${KATEX_PRIMARY_BASE_URL}/katex.min.js`, `${assetBasePath}/katex.min.js`],
-    [`${KATEX_PRIMARY_BASE_URL}/contrib/auto-render.min.js`, `${assetBasePath}/auto-render.min.js`],
-    [`${KATEX_FALLBACK_BASE_URL}/katex.min.css`, `${assetBasePath}/katex.min.css`],
-    [`${KATEX_FALLBACK_BASE_URL}/katex.min.js`, `${assetBasePath}/katex.min.js`],
-    [`${KATEX_FALLBACK_BASE_URL}/contrib/auto-render.min.js`, `${assetBasePath}/auto-render.min.js`]
-  ];
-
-  return replacements.reduce(
-    (current, [remoteUrl, localPath]) => current.split(remoteUrl).join(localPath),
-    String(html || '')
-  );
+  let nextHtml = String(html || '');
+  nextHtml = replaceOutsideTagBlocks(nextHtml, {
+    pattern: /https?:\/\/(?:cdn\.jsdelivr\.net\/npm|unpkg\.com)\/katex@[^/"')]+\/dist\/katex\.min\.css(?:[?#][^"')\s>]*)?/gi,
+    replacement: `${assetBasePath}/katex.min.css`
+  });
+  nextHtml = replaceOutsideTagBlocks(nextHtml, {
+    pattern: /https?:\/\/(?:cdn\.jsdelivr\.net\/npm|unpkg\.com)\/katex@[^/"')]+\/dist\/katex\.min\.js(?:[?#][^"')\s>]*)?/gi,
+    replacement: `${assetBasePath}/katex.min.js`
+  });
+  nextHtml = replaceOutsideTagBlocks(nextHtml, {
+    pattern: /https?:\/\/(?:cdn\.jsdelivr\.net\/npm|unpkg\.com)\/katex@[^/"')]+\/dist\/contrib\/auto-render\.min\.js(?:[?#][^"')\s>]*)?/gi,
+    replacement: `${assetBasePath}/auto-render.min.js`
+  });
+  nextHtml = replaceOutsideTagBlocks(nextHtml, {
+    pattern: /<link[^>]*rel=(["'])(?:preconnect|dns-prefetch)\1[^>]*href=(["'])https?:\/\/(?:cdn\.jsdelivr\.net|unpkg\.com)(?:\/[^"']*)?\2[^>]*>\s*/gi,
+    replacement: ''
+  });
+  return nextHtml;
 }
 
-function resolveBrowserExecutablePath({
+function safeRealpathSync(filePath, realpathSync = fs.realpathSync.native || fs.realpathSync) {
+  if (!filePath) {
+    return null;
+  }
+  try {
+    return realpathSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function toPosixPath(value) {
+  return String(value || '').split(path.sep).join('/');
+}
+
+function splitUrlDecoration(value = '') {
+  const match = String(value).match(/^([^?#]+)([?#].*)?$/);
+  return {
+    base: match ? match[1] : String(value),
+    suffix: match ? (match[2] || '') : ''
+  };
+}
+
+function safeReadDirEntries(dirPath, readdirSync = fs.readdirSync) {
+  try {
+    return readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function collectPlaywrightBrowserCandidates({
   env = process.env,
-  existsSync = fs.existsSync
+  homeDir = env.HOME || os.homedir(),
+  readdirSync = fs.readdirSync
 } = {}) {
-  const candidates = [
+  const roots = [];
+  if (env.PLAYWRIGHT_BROWSERS_PATH && String(env.PLAYWRIGHT_BROWSERS_PATH).trim() !== '0') {
+    roots.push(env.PLAYWRIGHT_BROWSERS_PATH);
+  }
+  if (homeDir) {
+    roots.push(path.join(homeDir, '.cache', 'ms-playwright'));
+  }
+
+  const candidates = [];
+  const binarySuffixes = [
+    path.join('chrome-linux', 'chrome'),
+    path.join('chrome-linux64', 'chrome'),
+    path.join('chrome-win', 'chrome.exe'),
+    path.join('chrome-win64', 'chrome.exe'),
+    path.join('chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+    path.join('chrome-mac', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing')
+  ];
+
+  for (const rootPath of roots) {
+    for (const entry of safeReadDirEntries(rootPath, readdirSync)) {
+      const name = typeof entry === 'string' ? entry : entry?.name;
+      if (!name || !/^(?:chromium|chrome|headless_shell)-/i.test(name)) {
+        continue;
+      }
+      for (const suffix of binarySuffixes) {
+        candidates.push(path.join(rootPath, name, suffix));
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function collectBrowserExecutableCandidates({
+  env = process.env,
+  homeDir = env.HOME || os.homedir(),
+  readdirSync = fs.readdirSync
+} = {}) {
+  return [
     env.RESEARCH_INTEL_CHROME_PATH,
     '/usr/bin/google-chrome-stable',
     '/usr/bin/google-chrome',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
+    '/usr/local/bin/google-chrome-stable',
+    '/usr/local/bin/google-chrome',
+    '/usr/local/bin/chromium',
+    '/usr/local/bin/chromium-browser',
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Chromium.app/Contents/MacOS/Chromium',
     '/mnt/c/Program Files/Google/Chrome/Application/chrome.exe',
-    '/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+    '/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+    ...collectPlaywrightBrowserCandidates({ env, homeDir, readdirSync })
   ].filter(Boolean);
+}
 
-  for (const candidate of candidates) {
+function resolveBrowserExecutablePath({
+  env = process.env,
+  existsSync = fs.existsSync,
+  realpathSync = fs.realpathSync.native || fs.realpathSync,
+  readdirSync = fs.readdirSync,
+  homeDir = env.HOME || os.homedir()
+} = {}) {
+  for (const candidate of collectBrowserExecutableCandidates({ env, homeDir, readdirSync })) {
+    try {
+      if (!existsSync(candidate)) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    const resolved = safeRealpathSync(candidate, realpathSync);
+    if (resolved && existsSync(resolved)) {
+      return resolved;
+    }
+    return candidate;
+  }
+
+  return null;
+}
+
+function buildMissingBrowserExecutableMessage({
+  env = process.env,
+  homeDir = env.HOME || os.homedir(),
+  readdirSync = fs.readdirSync
+} = {}) {
+  const candidates = collectBrowserExecutableCandidates({ env, homeDir, readdirSync });
+  const preview = candidates.slice(0, 12).join(', ') || 'none';
+  const suffix = candidates.length > 12 ? ', ...' : '';
+  return [
+    'Could not resolve a Chromium/Chrome executable for HTML validation.',
+    'Set RESEARCH_INTEL_CHROME_PATH to a working browser binary or install Chromium with Playwright.',
+    `Checked candidates: ${preview}${suffix}`
+  ].join(' ');
+}
+
+function looksLikeLocalImageAssetRef(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return false;
+  }
+  if (/^(?:data:|https?:|about:blank$|javascript:|mailto:|tel:|#)/i.test(normalized)) {
+    return false;
+  }
+  return /\.(?:avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i.test(normalized) || /^file:\/\//i.test(normalized);
+}
+
+function normalizePageAssetCandidate(filePath, { existsSync = fs.existsSync, readdirSync = fs.readdirSync, realpathSync = fs.realpathSync.native || fs.realpathSync } = {}) {
+  if (!filePath) {
+    return null;
+  }
+  if (existsSync(filePath)) {
+    return safeRealpathSync(filePath, realpathSync) || filePath;
+  }
+
+  const parsed = path.parse(filePath);
+  const match = parsed.base.match(/^page-0*(\d+)(\.[^.]+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  let entries = [];
+  try {
+    entries = readdirSync(parsed.dir);
+  } catch {
+    return null;
+  }
+
+  const targetNumber = String(Number(match[1]));
+  const targetExt = match[2].toLowerCase();
+  for (const entry of entries) {
+    const entryName = typeof entry === 'string' ? entry : entry?.name;
+    const entryMatch = String(entryName || '').match(/^page-0*(\d+)(\.[^.]+)$/i);
+    if (!entryMatch) {
+      continue;
+    }
+    if (String(Number(entryMatch[1])) !== targetNumber || entryMatch[2].toLowerCase() !== targetExt) {
+      continue;
+    }
+    const candidate = path.join(parsed.dir, entryName);
     if (existsSync(candidate)) {
-      return candidate;
+      return safeRealpathSync(candidate, realpathSync) || candidate;
     }
   }
 
   return null;
+}
+
+function resolveLocalImageAssetPath(rawUrl, {
+  htmlPath,
+  existsSync = fs.existsSync,
+  readdirSync = fs.readdirSync,
+  realpathSync = fs.realpathSync.native || fs.realpathSync
+} = {}) {
+  if (!looksLikeLocalImageAssetRef(rawUrl) || !htmlPath) {
+    return null;
+  }
+
+  const { base } = splitUrlDecoration(rawUrl);
+  let candidatePath = '';
+  try {
+    if (/^file:\/\//i.test(base)) {
+      candidatePath = fileURLToPath(base);
+    } else if (path.isAbsolute(base)) {
+      candidatePath = base;
+    } else {
+      candidatePath = path.resolve(path.dirname(htmlPath), decodeURIComponent(base));
+    }
+  } catch {
+    return null;
+  }
+
+  return normalizePageAssetCandidate(candidatePath, {
+    existsSync,
+    readdirSync,
+    realpathSync
+  });
+}
+
+function replaceLocalImageAssetRefs(html, {
+  htmlPath,
+  transformResolvedPath,
+  existsSync = fs.existsSync,
+  readdirSync = fs.readdirSync,
+  realpathSync = fs.realpathSync.native || fs.realpathSync,
+  readFileSync = fs.readFileSync
+} = {}) {
+  const replacer = rawValue => {
+    const resolvedPath = resolveLocalImageAssetPath(rawValue, {
+      htmlPath,
+      existsSync,
+      readdirSync,
+      realpathSync
+    });
+    if (!resolvedPath) {
+      return rawValue;
+    }
+    return transformResolvedPath(resolvedPath, { htmlPath, readFileSync });
+  };
+
+  let nextHtml = replaceOutsideTagBlocks(String(html || ''), {
+    pattern: /\b(src|href|poster)=(["'])([^"']+)\2/gi,
+    replacement: (fullMatch, attributeName, quote, rawValue) => `${attributeName}=${quote}${replacer(rawValue)}${quote}`
+  });
+
+  nextHtml = rewriteStyleBlocks(nextHtml, cssText => String(cssText || '').replace(
+    /url\((['"]?)([^)'"]+)\1\)/gi,
+    (fullMatch, quote = '', rawValue) => {
+      const nextValue = replacer(rawValue);
+      return `url(${quote}${nextValue}${quote})`;
+    }
+  ));
+
+  return nextHtml;
+}
+
+function normalizeLocalImageAssetRefs(html, options = {}) {
+  return replaceLocalImageAssetRefs(html, {
+    ...options,
+    transformResolvedPath: (resolvedPath, { htmlPath }) => toPosixPath(path.relative(path.dirname(htmlPath), resolvedPath))
+  });
+}
+
+function inlineLocalImageAssetRefs(html, options = {}) {
+  return replaceLocalImageAssetRefs(html, {
+    ...options,
+    transformResolvedPath: (resolvedPath, { readFileSync }) => `data:${imageMimeType(resolvedPath)};base64,${readFileSync(resolvedPath).toString('base64')}`
+  });
 }
 
 function escapeForRegex(text) {
@@ -1429,7 +2007,10 @@ async function prepareHtmlForLocalValidation(htmlPath) {
   const assetDir = path.join(path.dirname(htmlPath), 'assets', 'katex');
   await ensureLocalKatexAssets(assetDir);
   const html = fs.readFileSync(htmlPath, 'utf8');
-  const rewrittenHtml = rewriteHtmlToLocalKatexAssets(html, 'assets/katex');
+  const rewrittenHtml = normalizeLocalImageAssetRefs(
+    stripForbiddenRemoteDependencies(rewriteHtmlToLocalKatexAssets(html, 'assets/katex')),
+    { htmlPath }
+  );
   if (rewrittenHtml !== html) {
     fs.writeFileSync(htmlPath, rewrittenHtml, 'utf8');
   }
@@ -1439,7 +2020,10 @@ async function makeHtmlStandalone(htmlPath) {
   await prepareHtmlForLocalValidation(htmlPath);
   const assetDir = path.join(path.dirname(htmlPath), 'assets', 'katex');
   const html = fs.readFileSync(htmlPath, 'utf8');
-  const standaloneHtml = inlineKatexAssetsInHtml(html, assetDir, 'assets/katex');
+  const standaloneHtml = inlineLocalImageAssetRefs(
+    inlineKatexAssetsInHtml(html, assetDir, 'assets/katex'),
+    { htmlPath }
+  );
   fs.writeFileSync(htmlPath, standaloneHtml, 'utf8');
 }
 
@@ -1471,16 +2055,118 @@ async function captureValidationScreenshot(page, screenshotPath) {
   }
 }
 
+function startCodexHtmlTmuxSession({
+  sessionName,
+  workingDir,
+  runnerScriptPath,
+  configPath,
+  environmentEntries = []
+}) {
+  const launchCommand = buildCodexHtmlTmuxLaunchCommand({
+    workingDir,
+    runnerScriptPath,
+    configPath
+  });
+
+  const tmuxArgs = ['new-session', '-d', '-s', sessionName];
+  for (const entry of environmentEntries) {
+    tmuxArgs.push('-e', entry);
+  }
+  tmuxArgs.push('/bin/sh', '-c', launchCommand);
+
+  const result = spawnSync('tmux', tmuxArgs, {
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) {
+    throw new Error(`Failed to start tmux session ${sessionName}: ${result.stderr || result.stdout}`);
+  }
+}
+
+function buildCodexHtmlFailureMessage({
+  baseMessage,
+  sessionName,
+  runtimePaths,
+  paneText = ''
+}) {
+  const details = [
+    baseMessage,
+    `session=${sessionName}`,
+    `status=${runtimePaths.statusPath}`,
+    `stdout=${runtimePaths.stdoutPath}`,
+    `stderr=${runtimePaths.stderrPath}`
+  ];
+  if (paneText && paneText.trim()) {
+    details.push(`pane=${truncateText(paneText, 500)}`);
+  }
+  return details.join(' | ');
+}
+
+async function waitForCodexHtmlTmuxCompletion({
+  sessionName,
+  runtimePaths,
+  timeoutMs
+}) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    const status = readJsonIfExists(runtimePaths.statusPath);
+    if (status) {
+      return status;
+    }
+
+    if (!tmuxSessionExists(sessionName)) {
+      await sleep(200);
+      const lateStatus = readJsonIfExists(runtimePaths.statusPath);
+      if (lateStatus) {
+        return lateStatus;
+      }
+
+      throw new Error(buildCodexHtmlFailureMessage({
+        baseMessage: 'codex tmux session exited before writing status',
+        sessionName,
+        runtimePaths
+      }));
+    }
+
+    await sleep(TMUX_POLL_INTERVAL_MS);
+  }
+
+  const paneText = captureTmuxPane(sessionName);
+  if (paneText) {
+    fs.writeFileSync(runtimePaths.paneCapturePath, paneText, 'utf8');
+  }
+  if (tmuxSessionExists(sessionName)) {
+    killTmuxSession(sessionName);
+  }
+
+  throw new Error(buildCodexHtmlFailureMessage({
+    baseMessage: `codex tmux run timed out after ${timeoutMs}ms`,
+    sessionName,
+    runtimePaths,
+    paneText
+  }));
+}
+
 async function runCodexHtmlGeneration({
   workingDir,
   targetHtmlPath,
   finalMessagePath,
   promptText,
   attachedPageImages,
-  model = 'gpt-5.4',
-  reasoningEffort = 'medium',
-  timeoutMs = 300000
+  model = DEFAULT_CODEX_HTML_MODEL,
+  reasoningEffort = DEFAULT_CODEX_HTML_REASONING_EFFORT,
+  timeoutMs = DEFAULT_CODEX_HTML_TIMEOUT_MS
 }) {
+  const sessionName = buildCodexHtmlTmuxSessionName({
+    workingDir,
+    targetHtmlPath,
+    finalMessagePath
+  });
+  const runtimePaths = buildCodexHtmlTmuxRunPaths({
+    workingDir,
+    targetHtmlPath,
+    finalMessagePath
+  });
   const args = [
     'exec',
     '--ephemeral',
@@ -1502,20 +2188,54 @@ async function runCodexHtmlGeneration({
   }
   args.push('-');
 
-  const result = await runCommandWithTimeout({
+  ensureDir(runtimePaths.runtimeDir);
+  fs.writeFileSync(runtimePaths.promptPath, promptText, 'utf8');
+  fs.writeFileSync(runtimePaths.configPath, `${JSON.stringify({
     command: 'codex',
     args,
     cwd: workingDir,
-    input: promptText,
-    timeoutMs,
-    maxBuffer: 20 * 1024 * 1024
-  });
+    inputPath: runtimePaths.promptPath,
+    stdoutPath: runtimePaths.stdoutPath,
+    stderrPath: runtimePaths.stderrPath,
+    statusPath: runtimePaths.statusPath,
+    finalMessagePath
+  }, null, 2)}\n`, 'utf8');
 
-  if (result.code !== 0) {
-    throw new Error(`codex exec failed (${result.code}${result.signal ? `, signal=${result.signal}` : ''}): ${result.stderr || result.stdout}`);
+  if (tmuxSessionExists(sessionName)) {
+    killTmuxSession(sessionName);
+    await sleep(200);
+  }
+  startCodexHtmlTmuxSession({
+    sessionName,
+    workingDir,
+    runnerScriptPath: DETACHED_COMMAND_RUNNER_PATH,
+    configPath: runtimePaths.configPath,
+    environmentEntries: buildCodexHtmlTmuxEnvEntries(process.env)
+  });
+  const status = await waitForCodexHtmlTmuxCompletion({
+    sessionName,
+    runtimePaths,
+    timeoutMs
+  });
+  const stdout = fs.existsSync(runtimePaths.stdoutPath) ? fs.readFileSync(runtimePaths.stdoutPath, 'utf8') : '';
+  const stderr = fs.existsSync(runtimePaths.stderrPath) ? fs.readFileSync(runtimePaths.stderrPath, 'utf8') : '';
+
+  if (status.exitCode !== 0) {
+    throw new Error(buildCodexHtmlFailureMessage({
+      baseMessage: `codex exec failed (${status.exitCode}${status.signal ? `, signal=${status.signal}` : ''})`,
+      sessionName,
+      runtimePaths,
+      paneText: fs.existsSync(runtimePaths.paneCapturePath) ? fs.readFileSync(runtimePaths.paneCapturePath, 'utf8') : ''
+    }));
   }
 
-  const rawFinalMessage = fs.existsSync(finalMessagePath) ? fs.readFileSync(finalMessagePath, 'utf8') : '';
+  if (!fs.existsSync(finalMessagePath)) {
+    throw new Error(`Codex did not write the final message output file: ${finalMessagePath}`);
+  }
+  const rawFinalMessage = fs.readFileSync(finalMessagePath, 'utf8');
+  if (!rawFinalMessage.trim()) {
+    throw new Error(`Codex wrote an empty final message output file: ${finalMessagePath}`);
+  }
   const html = cleanHtmlResponse(rawFinalMessage);
   if (!/^<!doctype html/i.test(html) && !/^<html/i.test(html)) {
     throw new Error(`Codex final message did not look like HTML: ${rawFinalMessage.slice(0, 300)}`);
@@ -1523,9 +2243,11 @@ async function runCodexHtmlGeneration({
   fs.writeFileSync(targetHtmlPath, `${html}\n`, 'utf8');
 
   return {
-    stdout: result.stdout || '',
-    stderr: result.stderr || '',
-    finalMessage: rawFinalMessage
+    stdout,
+    stderr,
+    finalMessage: rawFinalMessage,
+    sessionName,
+    status
   };
 }
 
@@ -1536,9 +2258,12 @@ async function validateHtmlWithBrowser({ htmlPath, screenshotPath, evidencePages
   const placeholderMarkers = findPlaceholderMarkers(htmlSource);
   const qualityReport = inspectHtmlQuality(htmlSource, evidencePages);
   const executablePath = resolveBrowserExecutablePath();
+  if (!executablePath) {
+    throw new Error(buildMissingBrowserExecutableMessage());
+  }
   const browser = await puppeteer.launch({
     headless: 'new',
-    ...(executablePath ? { executablePath } : {}),
+    executablePath,
     args: ['--no-sandbox', '--disable-dev-shm-usage']
   });
 
@@ -1623,6 +2348,10 @@ async function validateHtmlWithBrowser({ htmlPath, screenshotPath, evidencePages
 
 module.exports = {
   buildCodexHtmlPrompt,
+  buildCodexHtmlTmuxEnvEntries,
+  buildCodexHtmlTmuxLaunchCommand,
+  buildCodexHtmlTmuxRunPaths,
+  buildCodexHtmlTmuxSessionName,
   buildDeterministicFallbackHtml,
   buildHtmlEnhancementPrompt,
   buildCodexInlineHtmlPrompt,
@@ -1636,8 +2365,10 @@ module.exports = {
   findRemoteAssetRefs,
   findPlaceholderMarkers,
   injectEvidenceGallery,
+  inlineLocalImageAssetRefs,
   inlineKatexAssetsInHtml,
   makeHtmlStandalone,
+  normalizeLocalImageAssetRefs,
   replaceFigurePlaceholdersWithEvidence,
   resolveBrowserExecutablePath,
   rewriteHtmlToLocalKatexAssets,

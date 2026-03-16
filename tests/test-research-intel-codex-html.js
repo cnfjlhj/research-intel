@@ -5,12 +5,18 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
+const { pathToFileURL } = require('url');
 
 const {
   buildCodexHtmlPrompt,
   buildHtmlEnhancementPrompt,
   buildCodexInlineHtmlPrompt,
   buildHtmlRepairPrompt,
+  buildCodexHtmlTmuxEnvEntries,
+  buildCodexHtmlTmuxLaunchCommand,
+  buildCodexHtmlTmuxRunPaths,
+  buildCodexHtmlTmuxSessionName,
   buildEvidenceManifest,
   buildDeterministicFallbackHtml,
   findPlaceholderMarkers,
@@ -19,11 +25,14 @@ const {
   chooseEvidencePages,
   cleanHtmlResponse,
   ensureLocalKatexAssets,
+  inlineLocalImageAssetRefs,
   injectEvidenceGallery,
   inlineKatexAssetsInHtml,
+  normalizeLocalImageAssetRefs,
   replaceFigurePlaceholdersWithEvidence,
   resolveBrowserExecutablePath,
   resolveAttachedPageImages,
+  runCodexHtmlGeneration,
   rewriteHtmlToLocalKatexAssets
 } = require('../scripts/research-intel/lib/codex-html');
 
@@ -39,6 +48,139 @@ test('resolveAttachedPageImages keeps every page and sorts naturally', () => {
     '/tmp/page-2.jpg',
     '/tmp/page-10.jpg'
   ]);
+});
+
+test('buildCodexHtmlTmuxSessionName creates a paper-scoped tmux-safe identifier', () => {
+  const sessionName = buildCodexHtmlTmuxSessionName({
+    workingDir: '/tmp/research-intel/papers/2603.08403',
+    targetHtmlPath: '/tmp/research-intel/papers/2603.08403/index.html',
+    finalMessagePath: '/tmp/research-intel/papers/2603.08403/repair/attempt-2.response.txt'
+  });
+
+  assert.match(sessionName, /^research-intel-html-2603-08403-attempt-2-[a-f0-9]{8}$/);
+  assert.ok(sessionName.length <= 64);
+});
+
+test('buildCodexHtmlTmuxRunPaths keeps detached-runner artifacts together', () => {
+  const paths = buildCodexHtmlTmuxRunPaths({
+    workingDir: '/tmp/research-intel/papers/2603.08403',
+    targetHtmlPath: '/tmp/research-intel/papers/2603.08403/index.html',
+    finalMessagePath: '/tmp/research-intel/papers/2603.08403/enhancement-response.txt'
+  });
+
+  assert.match(paths.runtimeDir, /\/\.codex-html-runs\/enhancement-response-[a-f0-9]{8}$/);
+  assert.match(paths.promptPath, /\/prompt\.md$/);
+  assert.match(paths.configPath, /\/runner-config\.json$/);
+  assert.match(paths.statusPath, /\/status\.json$/);
+  assert.match(paths.stdoutPath, /\/stdout\.log$/);
+  assert.match(paths.stderrPath, /\/stderr\.log$/);
+});
+
+test('buildCodexHtmlTmuxLaunchCommand invokes the detached runner from the paper workspace', () => {
+  const command = buildCodexHtmlTmuxLaunchCommand({
+    workingDir: '/tmp/research-intel/papers/2603.08403',
+    runnerScriptPath: '/repo/scripts/research-intel/lib/detached-command-runner.js',
+    configPath: '/tmp/research-intel/papers/2603.08403/.codex-html-runs/enhancement-response-a1b2c3d4/runner-config.json'
+  });
+
+  assert.match(command, /^cd '\/tmp\/research-intel\/papers\/2603\.08403'/);
+  assert.match(command, /exec '.*node.*' '\/repo\/scripts\/research-intel\/lib\/detached-command-runner\.js' '\/tmp\/research-intel\/papers\/2603\.08403\/\.codex-html-runs\/enhancement-response-a1b2c3d4\/runner-config\.json'/);
+});
+
+test('buildCodexHtmlTmuxEnvEntries keeps provider and proxy variables while dropping empty values', () => {
+  const entries = buildCodexHtmlTmuxEnvEntries({
+    CODEX_HOME: '/tmp/codex-home',
+    GGBOOM_API_KEY: 'sk-test',
+    OPENAI_API_KEY: 'sk-openai',
+    OPENAI_ORGANIZATION: 'org-test',
+    OPENAI_PROJECT: 'proj-test',
+    AZURE_OPENAI_API_VERSION: '2024-10-21',
+    AWS_REGION: 'us-west-2',
+    BEDROCK_MODEL_ID: 'anthropic.claude-v2',
+    HTTPS_PROXY: 'http://127.0.0.1:7890',
+    NODE_EXTRA_CA_CERTS: '/etc/ssl/custom.pem',
+    EMPTY_VALUE: '',
+    MULTILINE_SECRET: 'line1\nline2'
+  });
+
+  assert.deepEqual(entries, [
+    'AWS_REGION=us-west-2',
+    'AZURE_OPENAI_API_VERSION=2024-10-21',
+    'BEDROCK_MODEL_ID=anthropic.claude-v2',
+    'CODEX_HOME=/tmp/codex-home',
+    'GGBOOM_API_KEY=sk-test',
+    'HTTPS_PROXY=http://127.0.0.1:7890',
+    'NODE_EXTRA_CA_CERTS=/etc/ssl/custom.pem',
+    'OPENAI_API_KEY=sk-openai',
+    'OPENAI_ORGANIZATION=org-test',
+    'OPENAI_PROJECT=proj-test'
+  ]);
+});
+
+test('runCodexHtmlGeneration completes through a tmux-backed fake codex binary', async t => {
+  const tmuxCheck = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
+  if (tmuxCheck.status !== 0) {
+    t.skip('tmux is not available in this environment');
+    return;
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-codex-html-'));
+  const binDir = path.join(tempDir, 'bin');
+  const targetHtmlPath = path.join(tempDir, 'index.html');
+  const finalMessagePath = path.join(tempDir, 'model-response.txt');
+  const fakeCodexPath = path.join(binDir, 'codex');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(fakeCodexPath, [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'output_path=""',
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    '    -o)',
+    '      output_path="$2"',
+    '      shift 2',
+    '      ;;',
+    '    -i|-m|-C|-c|-s)',
+    '      shift 2',
+    '      ;;',
+    '    exec|--ephemeral|--skip-git-repo-check|--dangerously-bypass-approvals-and-sandbox|-)',
+    '      shift',
+    '      ;;',
+    '    *)',
+    '      shift',
+    '      ;;',
+    '  esac',
+    'done',
+    'cat >/dev/null',
+    'cat <<\'HTML\' > "$output_path"',
+    '<!DOCTYPE html><html><body><h1>研究动机</h1><h2>数学表示及建模</h2><h2>实验方法与实验设计</h2><h2>实验结果及核心结论</h2><h2>评论</h2><h2>Rebuttal 过程（如果有）</h2><h2>One More Thing</h2></body></html>',
+    'HTML',
+    'printf "fake stdout"',
+    'printf "fake stderr" >&2'
+  ].join('\n'), 'utf8');
+  fs.chmodSync(fakeCodexPath, 0o755);
+
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${previousPath}`;
+
+  try {
+    const result = await runCodexHtmlGeneration({
+      workingDir: tempDir,
+      targetHtmlPath,
+      finalMessagePath,
+      promptText: 'Generate a page.',
+      attachedPageImages: [],
+      timeoutMs: 5000
+    });
+
+    assert.match(result.sessionName, /^research-intel-html-/);
+    assert.equal(fs.existsSync(targetHtmlPath), true);
+    assert.match(fs.readFileSync(targetHtmlPath, 'utf8'), /<!DOCTYPE html>/);
+    assert.equal(result.stdout, 'fake stdout');
+    assert.equal(result.stderr, 'fake stderr');
+  } finally {
+    process.env.PATH = previousPath;
+  }
 });
 
 test('buildCodexHtmlPrompt encodes the hard requirements for direct Codex generation', () => {
@@ -68,9 +210,16 @@ test('buildCodexHtmlPrompt encodes the hard requirements for direct Codex genera
 test('buildCodexInlineHtmlPrompt forces raw html-only output', () => {
   const prompt = buildCodexInlineHtmlPrompt({
     templateHtml: '<html></html>',
+    paperPdfPath: '/paper/paper.pdf',
+    paperMetaPath: '/paper/paper_meta.json',
     paperMetaJson: '{"title":"x"}',
+    paperTextPath: '/paper/paper_text.txt',
+    paperTextPreviewPath: '/paper/paper_text_preview.txt',
     paperTextPreview: 'body',
+    openreviewSummaryPath: '/paper/openreview_summary.md',
     openreviewSummary: 'none',
+    pageImagesDir: '/paper/pages',
+    pageTextsDir: '/paper/page_texts',
     pageImageCount: 3
   });
 
@@ -78,7 +227,6 @@ test('buildCodexInlineHtmlPrompt forces raw html-only output', () => {
   assert.match(prompt, /苹果官网设计美学/);
   assert.match(prompt, /研究产品页/);
   assert.match(prompt, /手写 CSS/);
-  assert.match(prompt, /不要运行 shell/);
   assert.match(prompt, /attached images 数量：3/);
   assert.match(prompt, /模板视觉语言参考/);
   assert.match(prompt, /可见标题（h1\/h2\/h3）中必须直接出现这些字样/);
@@ -90,6 +238,14 @@ test('buildCodexInlineHtmlPrompt forces raw html-only output', () => {
   assert.match(prompt, /不要使用 Tailwind CDN/);
   assert.match(prompt, /不要使用 Google Fonts/);
   assert.match(prompt, /证据优先级/);
+  assert.match(prompt, /paper\.pdf 是唯一真相来源/);
+  assert.match(prompt, /如果辅助材料与 paper\.pdf 冲突，以 paper\.pdf 为准/);
+  assert.match(prompt, /你可以读取当前论文工作目录里的这些本地文件/);
+  assert.match(prompt, /\/paper\/paper\.pdf/);
+  assert.match(prompt, /\/paper\/paper_text\.txt/);
+  assert.match(prompt, /\/paper\/paper_text_preview\.txt/);
+  assert.match(prompt, /\/paper\/pages/);
+  assert.match(prompt, /\/paper\/page_texts/);
   assert.match(prompt, /OpenReview \/ rebuttal \/ review thread（如果有）/);
   assert.match(prompt, /如果论文没有 OpenReview/);
   assert.match(prompt, /行内公式统一使用 .*\\\( ... \\\)/);
@@ -100,7 +256,18 @@ test('buildCodexInlineHtmlPrompt forces raw html-only output', () => {
 
 test('buildHtmlRepairPrompt patches the current html against validation findings', () => {
   const prompt = buildHtmlRepairPrompt({
-    currentHtml: '<html><body><h2>1. 核心痛点</h2></body></html>',
+    paperPdfPath: '/paper/paper.pdf',
+    paperTextPath: '/paper/paper_text.txt',
+    currentHtmlPath: '/paper/index.html',
+    currentHtml: [
+      '<html><body><h2>1. 核心痛点</h2>',
+      '<img src="data:image/png;base64,AAAA">',
+      '<style data-research-intel-evidence-gallery>.ri-evidence-gallery{display:block}</style>',
+      '<section class="ri-evidence-gallery" data-research-intel-evidence-gallery="true">',
+      '<img src="data:image/jpeg;base64,BBBB">',
+      '</section>',
+      '</body></html>'
+    ].join(''),
     validationReport: {
       missingMarkers: ['研究动机', '评论'],
       consoleErrors: ['Failed to load resource'],
@@ -119,10 +286,40 @@ test('buildHtmlRepairPrompt patches the current html against validation findings
   assert.match(prompt, /missingMarkers/);
   assert.match(prompt, /研究动机/);
   assert.match(prompt, /评论/);
-  assert.match(prompt, /当前 HTML 如下/);
+  assert.match(prompt, /当前 HTML 精简预览如下/);
+  assert.match(prompt, /当前 HTML 文件路径: \/paper\/index\.html/);
+  assert.match(prompt, /paper\.pdf 是唯一真相来源/);
+  assert.match(prompt, /\/paper\/paper\.pdf/);
+  assert.match(prompt, /\/paper\/paper_text\.txt/);
   assert.match(prompt, /如果论文没有 OpenReview/);
   assert.match(prompt, /不要因为修一个 JS\/KaTeX 问题把整页内容重写/);
   assert.match(prompt, /Tailwind CDN/);
+  assert.match(prompt, /不要机械复制那一大段 base64 图库/);
+  assert.match(prompt, /data:embedded-asset-omitted-for-repair-prompt/);
+  assert.match(prompt, /research-intel evidence gallery omitted from repair prompt preview/);
+  assert.doesNotMatch(prompt, /data:image\/png;base64,AAAA/);
+  assert.doesNotMatch(prompt, /data:image\/jpeg;base64,BBBB/);
+  assert.doesNotMatch(prompt, /data-research-intel-evidence-gallery="true"/);
+});
+
+test('buildHtmlRepairPrompt stays below Codex input limits when current html contains massive inline assets', () => {
+  const hugeBase64 = 'A'.repeat(1_300_000);
+  const prompt = buildHtmlRepairPrompt({
+    paperPdfPath: '/paper/paper.pdf',
+    paperTextPath: '/paper/paper_text.txt',
+    currentHtmlPath: '/paper/index.html',
+    currentHtml: `<html><body><img src="data:image/jpeg;base64,${hugeBase64}"></body></html>`,
+    validationReport: {
+      consoleErrors: ['Failed to load resource']
+    },
+    paperMetaJson: '{"title":"Huge Inline Asset"}',
+    openreviewSummary: '',
+    paperTextPreview: 'paper text preview'
+  });
+
+  assert.ok(prompt.length < 1_048_576);
+  assert.match(prompt, /data:embedded-asset-omitted-for-repair-prompt/);
+  assert.doesNotMatch(prompt, /A{1024}/);
 });
 
 test('buildHtmlEnhancementPrompt preserves the existing draft structure while asking codex to deepen content and use evidence', () => {
@@ -251,6 +448,23 @@ test('rewriteHtmlToLocalKatexAssets rewrites remote katex assets to local relati
   assert.match(rewritten, /src="assets\/katex\/katex\.min\.js"/);
   assert.match(rewritten, /src="assets\/katex\/auto-render\.min\.js"/);
   assert.doesNotMatch(rewritten, /cdn\.jsdelivr\.net/);
+});
+
+test('rewriteHtmlToLocalKatexAssets handles arbitrary katex CDN versions and strips preconnect links', () => {
+  const input = [
+    '<link rel="preconnect" href="https://cdn.jsdelivr.net">',
+    '<link rel="preconnect" href="https://unpkg.com" crossorigin>',
+    '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css?cache=1">',
+    '<script src="https://unpkg.com/katex@0.16.10/dist/katex.min.js"></script>',
+    '<script src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/contrib/auto-render.min.js#hash"></script>'
+  ].join('\n');
+
+  const rewritten = rewriteHtmlToLocalKatexAssets(input, 'assets/katex');
+  assert.match(rewritten, /href="assets\/katex\/katex\.min\.css"/);
+  assert.match(rewritten, /src="assets\/katex\/katex\.min\.js"/);
+  assert.match(rewritten, /src="assets\/katex\/auto-render\.min\.js"/);
+  assert.doesNotMatch(rewritten, /preconnect/);
+  assert.doesNotMatch(rewritten, /cdn\.jsdelivr\.net|unpkg\.com/);
 });
 
 test('inlineKatexAssetsInHtml converts local katex references into a standalone html payload', () => {
@@ -445,6 +659,34 @@ test('findPlaceholderMarkers ignores todo-like substrings inside embedded data u
   assert.deepEqual(findPlaceholderMarkers(html), []);
 });
 
+test('findPlaceholderMarkers ignores placeholder-like substrings inside inline script and style blocks', () => {
+  const html = [
+    '<!DOCTYPE html>',
+    '<html><head>',
+    '<style>.demo::before{content:"placeholder";}</style>',
+    '</head><body>',
+    '<h2>研究动机</h2>',
+    '<script>const internalTodo = "ToDo"; const hiddenPlaceholder = "placeholder";</script>',
+    '<p>正文没有脏标记。</p>',
+    '</body></html>'
+  ].join('');
+
+  assert.deepEqual(findPlaceholderMarkers(html), []);
+});
+
+test('findPlaceholderMarkers ignores contextual discussion of source-paper placeholders inside normal prose', () => {
+  const html = [
+    '<!DOCTYPE html>',
+    '<html><body>',
+    '<h2>评论</h2>',
+    '<p>论文参考文献里还保留了一个 GPT-OSS placeholder，这属于原文自己的瑕疵，不是本页待补内容。</p>',
+    '<p>作者甚至留下了 “TODO: Add GPT-OSS reference” 这样的原文痕迹，所以这里需要指出问题，而不是静默删掉。</p>',
+    '</body></html>'
+  ].join('');
+
+  assert.deepEqual(findPlaceholderMarkers(html), []);
+});
+
 test('resolveBrowserExecutablePath prefers explicit env override and known system browser paths', () => {
   const explicit = resolveBrowserExecutablePath({
     env: { RESEARCH_INTEL_CHROME_PATH: '/custom/chrome' },
@@ -463,4 +705,64 @@ test('resolveBrowserExecutablePath prefers explicit env override and known syste
     existsSync: () => false
   });
   assert.equal(noBrowser, null);
+});
+
+test('resolveBrowserExecutablePath skips broken overrides and falls back to Playwright browser caches', () => {
+  const resolved = resolveBrowserExecutablePath({
+    env: {
+      RESEARCH_INTEL_CHROME_PATH: '/broken/chrome',
+      PLAYWRIGHT_BROWSERS_PATH: '/pw-cache',
+      HOME: '/home/tester'
+    },
+    existsSync: filePath => filePath === '/pw-cache/chromium-1208/chrome-linux64/chrome',
+    realpathSync: filePath => filePath,
+    readdirSync: dirPath => {
+      if (dirPath === '/pw-cache') {
+        return ['chromium-1208'];
+      }
+      return [];
+    }
+  });
+
+  assert.equal(resolved, '/pw-cache/chromium-1208/chrome-linux64/chrome');
+});
+
+test('normalizeLocalImageAssetRefs rewrites file urls and zero-padded page refs to real relative assets', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-local-images-'));
+  const htmlPath = path.join(tempDir, 'index.html');
+  const pagesDir = path.join(tempDir, 'pages');
+  fs.mkdirSync(pagesDir, { recursive: true });
+  fs.writeFileSync(path.join(pagesDir, 'page-2.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+
+  const input = [
+    '<!DOCTYPE html>',
+    '<html><body>',
+    `<img src="${pathToFileURL(path.join(pagesDir, 'page-02.jpg')).toString()}">`,
+    '<img src="pages/page-02.jpg">',
+    '</body></html>'
+  ].join('\n');
+
+  const normalized = normalizeLocalImageAssetRefs(input, { htmlPath });
+  assert.match(normalized, /src="pages\/page-2\.jpg"/);
+  assert.doesNotMatch(normalized, /file:\/\//);
+  assert.doesNotMatch(normalized, /page-02\.jpg/);
+});
+
+test('inlineLocalImageAssetRefs converts local page images into embedded data urls', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-inline-local-images-'));
+  const htmlPath = path.join(tempDir, 'index.html');
+  const pagesDir = path.join(tempDir, 'pages');
+  fs.mkdirSync(pagesDir, { recursive: true });
+  fs.writeFileSync(path.join(pagesDir, 'page-2.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+
+  const input = [
+    '<!DOCTYPE html>',
+    '<html><body>',
+    '<img src="pages/page-02.jpg">',
+    '</body></html>'
+  ].join('\n');
+
+  const standalone = inlineLocalImageAssetRefs(input, { htmlPath });
+  assert.match(standalone, /src="data:image\/jpeg;base64,/);
+  assert.doesNotMatch(standalone, /pages\/page-02\.jpg/);
 });

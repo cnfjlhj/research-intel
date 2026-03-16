@@ -1,0 +1,40 @@
+<svg width="1600" height="760" viewBox="0 0 1600 760" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="760" rx="40" fill="#F3F7FB"/>
+  <rect x="64" y="64" width="1472" height="632" rx="28" fill="#FFFFFF" stroke="#D7E2F0" stroke-width="2"/>
+  <text x="104" y="144" fill="#172033" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="54" font-weight="700">
+    Verification status on 2026-03-17
+  </text>
+  <text x="104" y="194" fill="#526075" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
+    Public claims now follow fresh local evidence and fresh baohe evidence.
+  </text>
+
+  <rect x="104" y="252" width="1392" height="112" rx="24" fill="#EFFCF4" stroke="#8ED3A7" stroke-width="2"/>
+  <circle cx="164" cy="308" r="22" fill="#16A34A"/>
+  <path d="M153 309L161 317L177 300" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="206" y="304" fill="#14532D" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="32" font-weight="700">
+    Local test suite
+  </text>
+  <text x="206" y="340" fill="#166534" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    The relevant local suites were rerun before any success claim.
+  </text>
+
+  <rect x="104" y="396" width="1392" height="112" rx="24" fill="#EFF8FF" stroke="#9FCEF6" stroke-width="2"/>
+  <circle cx="164" cy="452" r="22" fill="#0284C7"/>
+  <path d="M153 453L161 461L177 444" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="206" y="448" fill="#0C4A6E" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="32" font-weight="700">
+    Minimal baohe Codex task
+  </text>
+  <text x="206" y="484" fill="#075985" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    A fresh tmux-backed Codex HTML task wrote its real `-o` output on baohe.
+  </text>
+
+  <rect x="104" y="540" width="1392" height="112" rx="24" fill="#EFFCF4" stroke="#8ED3A7" stroke-width="2"/>
+  <circle cx="164" cy="596" r="22" fill="#16A34A"/>
+  <path d="M153 597L161 605L177 588" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="206" y="592" fill="#14532D" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="32" font-weight="700">
+    Single-paper baohe smoke passed with temporary dirs
+  </text>
+  <text x="206" y="628" fill="#166534" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    `index.html`, `manifest.json`, `html_validation.json`, and `standalone_validation.json` were generated and validated.
+  </text>
+</svg>

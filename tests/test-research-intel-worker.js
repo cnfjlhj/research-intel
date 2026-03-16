@@ -54,6 +54,10 @@ test('buildWorkerPrompt includes the required context, deliverables, and status 
   assert.match(prompt, /git commit/i);
   assert.match(prompt, /current-run\.json/);
   assert.match(prompt, /worker-progress\.md/);
+  assert.match(prompt, /paper\.pdf 是唯一真相来源/);
+  assert.match(prompt, /独立 paper workspace、独立 Codex tmux session/);
+  assert.match(prompt, /fresh generation attempt/);
+  assert.doesNotMatch(prompt, /优先修补已有 HTML/);
 });
 
 test('buildWorkerSessionName scopes worker tmux sessions by date', () => {

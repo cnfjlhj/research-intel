@@ -5,23 +5,18 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const dotenv = require('dotenv');
 
-dotenv.config({ path: path.join(__dirname, '../../.env'), quiet: true });
-
 const { buildPdfCandidateUrls, buildSearchQueries, fetchArxivEntriesByIds, fetchArxivQuery } = require('./lib/arxiv');
-const { MinuteRateLimiter, generateHtmlWithFallbacks } = require('./lib/chat-html');
+const { MinuteRateLimiter } = require('./lib/chat-html');
 const { applyDailyCuration, curateDailySelection } = require('./lib/curation');
 const {
   buildEvidenceManifest,
   buildCodexInlineHtmlPrompt,
-  buildDeterministicFallbackHtml,
-  buildHtmlEnhancementPrompt,
-  buildHtmlRepairPrompt,
   cleanHtmlResponse,
   injectEvidenceGallery,
-  inspectHtmlQuality,
   makeHtmlStandalone,
   replaceFigurePlaceholdersWithEvidence,
   renderPdfPagesToImages,
+  buildCodexHtmlTmuxRunPaths,
   runCodexHtmlGeneration,
   selectEvidencePageImages,
   validateHtmlWithBrowser
@@ -63,18 +58,22 @@ const DEFAULT_PROFILE_DIR = path.join(ROOT_DIR, 'work/research-intel/profile');
 const DEFAULT_BASE_DIR = path.join(ROOT_DIR, 'work/research-intel');
 const DEFAULT_RECORDS_DIR = path.join(ROOT_DIR, 'research-intel-records');
 const DEFAULT_HISTORY_DIR = path.join(DEFAULT_RECORDS_DIR, 'history');
+const DEFAULT_PROJECT_ENV_PATH = path.join(ROOT_DIR, '.env');
 const DEFAULT_RUNTIME_ENV_PATH = path.join(DEFAULT_PROFILE_DIR, 'runtime.env');
 const USER_AGENT = 'research-intel-bot/0.1 (+local)';
 const DEFAULT_HTML_TEXT_PREVIEW_LIMIT = 16000;
 const DEFAULT_HTML_EVIDENCE_IMAGE_LIMIT = 6;
+const DEFAULT_HTML_GENERATION_MAX_ATTEMPTS = 2;
 
 function parseArgs(argv) {
   const options = {
     profileDir: DEFAULT_PROFILE_DIR,
+    profileDirExplicit: false,
     baseDir: DEFAULT_BASE_DIR,
     recordsDir: DEFAULT_RECORDS_DIR,
     historyDir: DEFAULT_HISTORY_DIR,
     runtimeEnvPath: DEFAULT_RUNTIME_ENV_PATH,
+    runtimeEnvExplicit: false,
     maxResultsPerQuery: 12,
     paperLimit: null,
     noTelegram: false,
@@ -83,11 +82,13 @@ function parseArgs(argv) {
     gitCommit: false,
     dateString: null
   };
+  let runtimeEnvExplicit = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === '--profile-dir') {
       options.profileDir = path.resolve(argv[index + 1]);
+      options.profileDirExplicit = true;
       index += 1;
     } else if (value === '--base-dir') {
       options.baseDir = path.resolve(argv[index + 1]);
@@ -100,6 +101,8 @@ function parseArgs(argv) {
       index += 1;
     } else if (value === '--runtime-env') {
       options.runtimeEnvPath = path.resolve(argv[index + 1]);
+      runtimeEnvExplicit = true;
+      options.runtimeEnvExplicit = true;
       index += 1;
     } else if (value === '--date') {
       options.dateString = argv[index + 1];
@@ -123,6 +126,10 @@ function parseArgs(argv) {
     }
   }
 
+  if (!runtimeEnvExplicit) {
+    options.runtimeEnvPath = path.join(options.profileDir, 'runtime.env');
+  }
+
   return options;
 }
 
@@ -131,6 +138,10 @@ function parseEnvList(value) {
     .split(',')
     .map(item => item.trim())
     .filter(Boolean);
+}
+
+function shouldLoadProjectEnv(options = {}) {
+  return !options.profileDirExplicit && !options.runtimeEnvExplicit;
 }
 
 function resolveRuntimeModelConfig(env = process.env) {
@@ -154,6 +165,12 @@ function resolveRuntimeModelConfig(env = process.env) {
 
 function ensureDir(targetDir) {
   fs.mkdirSync(targetDir, { recursive: true });
+}
+
+function loadProjectEnv(projectEnvPath = DEFAULT_PROJECT_ENV_PATH) {
+  if (projectEnvPath && fs.existsSync(projectEnvPath)) {
+    dotenv.config({ path: projectEnvPath, quiet: true });
+  }
 }
 
 function loadRuntimeEnv(runtimeEnvPath) {
@@ -596,62 +613,178 @@ function desiredPaperCount(profile, paperLimit = null) {
   return paperLimit ? Math.min(desiredCount, paperLimit) : desiredCount;
 }
 
-function normalizeHtmlForAudit(html) {
-  return String(html || '')
-    .replace(/\s+/g, ' ')
-    .trim();
+function buildPaperHtmlAttemptPaths(paperDir, attemptNumber) {
+  const attemptLabel = `attempt-${String(attemptNumber).padStart(2, '0')}`;
+  const attemptDir = path.join(paperDir, 'generation_attempts', attemptLabel);
+  return {
+    attemptNumber,
+    attemptLabel,
+    attemptDir,
+    promptPath: path.join(attemptDir, 'generation_prompt.md'),
+    htmlPath: path.join(attemptDir, 'index.html'),
+    initialHtmlPath: path.join(attemptDir, 'index.initial.html'),
+    finalMessagePath: path.join(attemptDir, 'codex_final_message.txt'),
+    codexStdoutPath: path.join(attemptDir, 'codex_stdout.txt'),
+    codexStderrPath: path.join(attemptDir, 'codex_stderr.txt'),
+    initialModelMessagePath: path.join(attemptDir, 'initial_model_message.txt'),
+    initialModelRawPath: path.join(attemptDir, 'initial_model_raw.txt'),
+    htmlValidationPath: path.join(attemptDir, 'html_validation.json'),
+    htmlValidationScreenshotPath: path.join(attemptDir, 'html_validation.png'),
+    standaloneValidationPath: path.join(attemptDir, 'standalone_validation.json'),
+    standaloneValidationScreenshotPath: path.join(attemptDir, 'standalone_validation.png')
+  };
 }
 
-async function applyDeterministicFallbackArtifact({
-  paper,
-  meta,
-  openreviewSummary,
-  paperTextPreview,
-  webCoverage,
-  htmlPath,
-  fallbackHtmlPath,
-  metadataPath,
-  screenshotPath,
-  evidencePages,
-  reason,
-  makeStandalone = false
-}) {
-  const fallbackHtml = buildDeterministicFallbackHtml({
-    meta,
-    openreviewSummary,
-    paperTextPreview,
-    webCoverage
+function copyFileIfExists(sourcePath, targetPath) {
+  if (!fs.existsSync(sourcePath)) {
+    return;
+  }
+  ensureDir(path.dirname(targetPath));
+  fs.copyFileSync(sourcePath, targetPath);
+}
+
+function writePaperRunState(runStatePath, payload) {
+  writeJson(runStatePath, {
+    ...payload,
+    updatedAt: new Date().toISOString()
   });
+}
 
-  writeText(fallbackHtmlPath, `${fallbackHtml}\n`);
-  writeText(
-    htmlPath,
-    `${injectEvidenceGallery(replaceFigurePlaceholdersWithEvidence(fallbackHtml, evidencePages), evidencePages)}\n`
-  );
+function summarizeValidationReport(validation = {}) {
+  const renderIssue = issue => {
+    if (!issue) {
+      return '';
+    }
+    if (typeof issue === 'string') {
+      return issue;
+    }
+    if (issue.code === 'placeholder_marker' && Array.isArray(issue.markers)) {
+      return `${issue.code}:${issue.markers.join(', ')}`;
+    }
+    if (typeof issue.code === 'string') {
+      return issue.code;
+    }
+    return JSON.stringify(issue);
+  };
+  const parts = [];
+  const missingMarkers = (validation.missingMarkers || []).slice(0, 4);
+  const remoteAssetRefs = (validation.remoteAssetRefs || []).slice(0, 3);
+  const consoleErrors = (validation.consoleErrors || []).slice(0, 2);
+  const qualityIssues = (validation.qualityIssues || []).slice(0, 3);
+  const placeholderMarkers = (validation.placeholderMarkers || []).slice(0, 3);
 
-  if (makeStandalone) {
-    await makeHtmlStandalone(htmlPath);
+  if (missingMarkers.length > 0) {
+    parts.push(`missing headings: ${missingMarkers.join(', ')}`);
+  }
+  if (remoteAssetRefs.length > 0) {
+    parts.push(`remote assets: ${remoteAssetRefs.join(', ')}`);
+  }
+  if (consoleErrors.length > 0) {
+    parts.push(`console errors: ${consoleErrors.join(' | ')}`);
+  }
+  if (qualityIssues.length > 0) {
+    parts.push(`quality issues: ${qualityIssues.map(renderIssue).filter(Boolean).join(', ')}`);
+  }
+  if (placeholderMarkers.length > 0) {
+    parts.push(`placeholder markers: ${placeholderMarkers.join(', ')}`);
   }
 
-  const validation = await validateHtmlWithBrowser({
-    htmlPath,
-    screenshotPath,
-    evidencePages
+  return parts.join('; ') || 'browser validation failed without a parsed summary';
+}
+
+function buildAttemptFailureSummary(attemptResult) {
+  if (attemptResult?.htmlValidation && !attemptResult.htmlValidation.ok) {
+    return summarizeValidationReport(attemptResult.htmlValidation);
+  }
+  if (attemptResult?.standaloneValidation && !attemptResult.standaloneValidation.ok) {
+    return summarizeValidationReport(attemptResult.standaloneValidation);
+  }
+  return 'html generation attempt failed without a structured validation summary';
+}
+
+async function runPaperHtmlGenerationAttempt({
+  paperDir,
+  promptText,
+  attachedPageImages,
+  evidencePages,
+  options,
+  attemptPaths
+}) {
+  const runtimePaths = buildCodexHtmlTmuxRunPaths({
+    workingDir: paperDir,
+    targetHtmlPath: attemptPaths.htmlPath,
+    finalMessagePath: attemptPaths.finalMessagePath
   });
+  ensureDir(attemptPaths.attemptDir);
+  writeText(attemptPaths.promptPath, `${promptText}\n`);
 
-  const metadata = {
-    used: true,
-    ok: validation.ok,
-    paperTitle: paper.title,
-    reason,
-    makeStandalone,
-    fallbackHtmlPath,
-    screenshotPath,
-    validation
-  };
-  writeJson(metadataPath, metadata);
+  try {
+    const codexRun = await runCodexHtmlGeneration({
+      workingDir: paperDir,
+      targetHtmlPath: attemptPaths.htmlPath,
+      finalMessagePath: attemptPaths.finalMessagePath,
+      promptText,
+      attachedPageImages,
+      model: options.codexHtmlModel,
+      reasoningEffort: options.codexHtmlReasoningEffort,
+      timeoutMs: options.codexHtmlTimeoutMs
+    });
 
-  return metadata;
+    const rawFinalMessage = fs.existsSync(attemptPaths.finalMessagePath)
+      ? fs.readFileSync(attemptPaths.finalMessagePath, 'utf8')
+      : codexRun.finalMessage || '';
+    const cleanedHtml = cleanHtmlResponse(rawFinalMessage);
+    writeText(attemptPaths.codexStdoutPath, `${codexRun.stdout || ''}\n`);
+    writeText(attemptPaths.codexStderrPath, `${codexRun.stderr || ''}\n`);
+    writeText(attemptPaths.initialModelMessagePath, `${rawFinalMessage}\n`);
+    writeText(attemptPaths.initialModelRawPath, `${rawFinalMessage}\n`);
+    writeText(attemptPaths.initialHtmlPath, `${cleanedHtml}\n`);
+    writeText(
+      attemptPaths.htmlPath,
+      `${injectEvidenceGallery(replaceFigurePlaceholdersWithEvidence(cleanedHtml, evidencePages), evidencePages)}\n`
+    );
+
+    await makeHtmlStandalone(attemptPaths.htmlPath);
+
+    const htmlValidation = await validateHtmlWithBrowser({
+      htmlPath: attemptPaths.htmlPath,
+      screenshotPath: attemptPaths.htmlValidationScreenshotPath,
+      evidencePages
+    });
+    writeJson(attemptPaths.htmlValidationPath, {
+      ...htmlValidation,
+      generationAttempt: attemptPaths.attemptNumber,
+      validationMode: 'final-standalone'
+    });
+
+    const standaloneValidation = await validateHtmlWithBrowser({
+      htmlPath: attemptPaths.htmlPath,
+      screenshotPath: attemptPaths.standaloneValidationScreenshotPath,
+      evidencePages
+    });
+    writeJson(attemptPaths.standaloneValidationPath, {
+      ...standaloneValidation,
+      generationAttempt: attemptPaths.attemptNumber,
+      validationMode: 'standalone-rerun'
+    });
+
+    return {
+      attemptNumber: attemptPaths.attemptNumber,
+      attemptLabel: attemptPaths.attemptLabel,
+      attemptDir: attemptPaths.attemptDir,
+      sessionName: codexRun.sessionName,
+      runtimePaths,
+      status: htmlValidation.ok && standaloneValidation.ok ? 'passed_validation' : 'failed_validation',
+      generationModel: options.codexHtmlModel,
+      generationSource: 'codex-tmux-pdf-first-single-chain',
+      htmlValidation,
+      standaloneValidation
+    };
+  } catch (error) {
+    copyFileIfExists(runtimePaths.stdoutPath, attemptPaths.codexStdoutPath);
+    copyFileIfExists(runtimePaths.stderrPath, attemptPaths.codexStderrPath);
+    throw error;
+  }
 }
 
 async function fetchCandidates(profile, maxResultsPerQuery) {
@@ -707,32 +840,23 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
   const pageTextsDir = path.join(paperDir, 'page_texts');
   const paperMetaPath = path.join(paperDir, 'paper_meta.json');
   const promptPath = path.join(paperDir, 'generation_prompt.md');
+  const runStatePath = path.join(paperDir, 'run_state.json');
   const finalMessagePath = path.join(paperDir, 'codex_final_message.txt');
   const codexStdoutPath = path.join(paperDir, 'codex_stdout.txt');
   const codexStderrPath = path.join(paperDir, 'codex_stderr.txt');
   const initialModelMessagePath = path.join(paperDir, 'initial_model_message.txt');
   const initialModelRawPath = path.join(paperDir, 'initial_model_raw.txt');
-  const enhancementPromptPath = path.join(paperDir, 'codex_enhancement_prompt.md');
-  const enhancementMessagePath = path.join(paperDir, 'codex_enhancement_message.txt');
-  const enhancementStdoutPath = path.join(paperDir, 'codex_enhancement_stdout.txt');
-  const enhancementStderrPath = path.join(paperDir, 'codex_enhancement_stderr.txt');
   const enhancementMetaPath = path.join(paperDir, 'codex_enhancement.json');
   const webCoveragePath = path.join(paperDir, 'web_coverage.json');
   const webCoverageMarkdownPath = path.join(paperDir, 'web_coverage.md');
   const htmlPath = path.join(paperDir, 'index.html');
   const initialHtmlPath = path.join(paperDir, 'index.initial.html');
-  const fallbackHtmlPath = path.join(paperDir, 'index.deterministic-fallback.html');
   const htmlValidationPath = path.join(paperDir, 'html_validation.json');
   const htmlValidationScreenshotPath = path.join(paperDir, 'html_validation.png');
   const standaloneValidationPath = path.join(paperDir, 'standalone_validation.json');
   const standaloneValidationScreenshotPath = path.join(paperDir, 'standalone_validation.png');
-  const fallbackValidationMetaPath = path.join(paperDir, 'deterministic_fallback.validation.json');
-  const fallbackValidationScreenshotPath = path.join(paperDir, 'deterministic_fallback.validation.png');
-  const fallbackStandaloneMetaPath = path.join(paperDir, 'deterministic_fallback.standalone.json');
-  const fallbackStandaloneScreenshotPath = path.join(paperDir, 'deterministic_fallback.standalone.png');
   const evidencePagesPath = path.join(paperDir, 'evidence_pages.json');
   const paperCardPath = path.join(paperDir, 'paper_card.json');
-  const repairDir = path.join(paperDir, 'repair');
 
   let openreviewData = null;
   let openreviewSummary = '暂无公开 OpenReview 信息。';
@@ -797,297 +921,175 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
   const templateHtml = options.htmlTemplate?.templateHtml || '';
   const promptText = buildCodexInlineHtmlPrompt({
     templateHtml,
+    paperPdfPath,
+    paperMetaPath,
     paperMetaJson: fs.readFileSync(paperMetaPath, 'utf8'),
+    paperTextPath,
+    paperTextPreviewPath,
     paperTextPreview: fs.readFileSync(paperTextPreviewPath, 'utf8'),
+    openreviewSummaryPath,
     openreviewSummary: fs.readFileSync(openreviewSummaryPath, 'utf8'),
+    pageImagesDir,
+    pageTextsDir,
     pageImageCount: attachedPageImages.length
   });
   writeText(promptPath, `${promptText}\n`);
 
-  let htmlRun;
-  let cleanedHtml = '';
-  if (options.codexHtmlEnhancementEnabled) {
-    const codexRun = await runCodexHtmlGeneration({
-      workingDir: paperDir,
-      targetHtmlPath: htmlPath,
-      finalMessagePath,
-      promptText,
-      attachedPageImages,
-      model: options.codexHtmlModel,
-      reasoningEffort: options.codexHtmlReasoningEffort,
-      timeoutMs: options.codexHtmlTimeoutMs
-    });
-    const rawFinalMessage = fs.existsSync(finalMessagePath) ? fs.readFileSync(finalMessagePath, 'utf8') : codexRun.finalMessage || '';
-    cleanedHtml = cleanHtmlResponse(rawFinalMessage);
-    htmlRun = {
-      model: options.codexHtmlModel,
-      content: rawFinalMessage,
-      raw: codexRun.stdout || '',
-      source: 'codex-direct'
-    };
-    writeText(codexStdoutPath, `${codexRun.stdout || ''}\n`);
-    writeText(codexStderrPath, `${codexRun.stderr || ''}\n`);
-  } else {
-    const legacyRun = await generateHtmlWithFallbacks({
-      apiBaseUrl: options.htmlApiBaseUrl,
-      apiKey: options.htmlApiKey,
-      models: options.htmlModels,
-      promptText,
-      attachedPageImages,
-      rateLimiter: options.rateLimiter,
-      timeoutMs: options.chatTimeoutMs
-    });
-    cleanedHtml = cleanHtmlResponse(legacyRun.content);
-    htmlRun = {
-      ...legacyRun,
-      source: 'legacy-chat-completions'
-    };
-    writeText(finalMessagePath, `${legacyRun.content}\n`);
-    writeText(codexStdoutPath, `${legacyRun.raw}\n`);
-    writeText(codexStderrPath, '');
-  }
-  writeText(initialModelMessagePath, `${htmlRun.content}\n`);
-  writeText(initialModelRawPath, `${htmlRun.raw || ''}\n`);
-  writeText(initialHtmlPath, `${cleanedHtml}\n`);
-  writeText(htmlPath, `${cleanedHtml}\n`);
-
-  let codexEnhancement = {
+  const codexEnhancement = {
     ok: false,
-    enabled: options.codexHtmlEnhancementEnabled,
+    enabled: false,
     model: options.codexHtmlModel,
-    error: ''
+    skipped: true,
+    reason: 'single_chain_no_post_generation_patch'
   };
-  if (!options.codexHtmlEnhancementEnabled) {
-    codexEnhancement = {
-      ok: false,
-      enabled: false,
-      model: '',
-      skipped: true,
-      reason: 'disabled'
-    };
-  } else {
-    const shouldRunEnhancementPass = htmlRun.source !== 'codex-direct';
-    if (!shouldRunEnhancementPass) {
-      codexEnhancement = {
-        ok: false,
-        enabled: true,
-        model: options.codexHtmlModel,
-        skipped: true,
-        reason: 'codex_primary_generation'
-      };
-    } else {
-      try {
-        const htmlBeforeEnhancement = fs.readFileSync(htmlPath, 'utf8');
-        const qualityBeforeEnhancement = inspectHtmlQuality(htmlBeforeEnhancement, evidencePages);
-        const codexEvidenceImages = attachedPageImages;
-        const enhancementPrompt = buildHtmlEnhancementPrompt({
-          currentHtml: htmlBeforeEnhancement,
-          paperMetaJson: fs.readFileSync(paperMetaPath, 'utf8'),
-          paperTextPreview: truncateForLlm(fs.readFileSync(paperTextPath, 'utf8'), 22000),
-          openreviewSummary: fs.readFileSync(openreviewSummaryPath, 'utf8'),
-          webCoverageJson: fs.readFileSync(webCoveragePath, 'utf8'),
-          evidenceManifestJson: fs.readFileSync(evidencePagesPath, 'utf8')
-        });
-        writeText(enhancementPromptPath, `${enhancementPrompt}\n`);
-        const enhancementRun = await runCodexHtmlGeneration({
-          workingDir: paperDir,
-          targetHtmlPath: htmlPath,
-          finalMessagePath: enhancementMessagePath,
-          promptText: enhancementPrompt,
-          attachedPageImages: codexEvidenceImages,
-          model: options.codexHtmlModel,
-          reasoningEffort: options.codexHtmlReasoningEffort,
-          timeoutMs: options.codexHtmlTimeoutMs
-        });
-        writeText(enhancementStdoutPath, `${enhancementRun.stdout || ''}\n`);
-        writeText(enhancementStderrPath, `${enhancementRun.stderr || ''}\n`);
-        const htmlAfterEnhancement = fs.readFileSync(htmlPath, 'utf8');
-        const qualityAfterEnhancement = inspectHtmlQuality(htmlAfterEnhancement, evidencePages);
-        const changed = normalizeHtmlForAudit(htmlAfterEnhancement) !== normalizeHtmlForAudit(htmlBeforeEnhancement);
-        codexEnhancement = {
-          ok: true,
-          enabled: true,
-          model: options.codexHtmlModel,
-          timeoutMs: options.codexHtmlTimeoutMs,
-          changed,
-          attachedImageCount: codexEvidenceImages.length,
-          finalMessagePath: enhancementMessagePath,
-          promptPath: enhancementPromptPath,
-          stdoutPath: enhancementStdoutPath,
-          stderrPath: enhancementStderrPath,
-          qualityBefore: qualityBeforeEnhancement,
-          qualityAfter: qualityAfterEnhancement
-        };
-      } catch (error) {
-        writeText(enhancementStderrPath, `${error.stack || error.message}\n`);
-        codexEnhancement = {
-          ok: false,
-          enabled: true,
-          model: options.codexHtmlModel,
-          timeoutMs: options.codexHtmlTimeoutMs,
-          attachedImageCount: attachedPageImages.length,
-          error: error.message
-        };
-      }
-    }
-  }
   writeJson(enhancementMetaPath, codexEnhancement);
-  writeText(
+  const runState = {
+    paperTitle: paper.title,
+    arxivId: paper.arxivId || '',
+    status: 'running',
+    stage: 'prepare',
+    architecture: 'pdf-first-paper-scoped-tmux-codex-single-chain',
+    maxAttempts: DEFAULT_HTML_GENERATION_MAX_ATTEMPTS,
+    selectedAttempt: null,
+    promptPath,
     htmlPath,
-    `${injectEvidenceGallery(replaceFigurePlaceholdersWithEvidence(fs.readFileSync(htmlPath, 'utf8'), evidencePages), evidencePages)}\n`
-  );
+    htmlValidationPath,
+    standaloneValidationPath,
+    attempts: []
+  };
+  writePaperRunState(runStatePath, runState);
 
-  let htmlValidation = await validateHtmlWithBrowser({
-    htmlPath,
-    screenshotPath: htmlValidationScreenshotPath,
-    evidencePages
+  let selectedAttempt = null;
+  let lastFailureMessage = '';
+
+  writePaperRunState(runStatePath, {
+    ...runState,
+    stage: 'generate'
   });
-  const repairAttempts = [];
-  let validationFallback = null;
 
-  if (!htmlValidation.ok) {
-    ensureDir(repairDir);
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      const repairPrompt = buildHtmlRepairPrompt({
-        currentHtml: fs.readFileSync(htmlPath, 'utf8'),
-        validationReport: htmlValidation,
-        paperMetaJson: fs.readFileSync(paperMetaPath, 'utf8'),
-        openreviewSummary: fs.readFileSync(openreviewSummaryPath, 'utf8'),
-        paperTextPreview: fs.readFileSync(paperTextPreviewPath, 'utf8')
+  for (let attemptNumber = 1; attemptNumber <= DEFAULT_HTML_GENERATION_MAX_ATTEMPTS; attemptNumber += 1) {
+    const attemptPaths = buildPaperHtmlAttemptPaths(paperDir, attemptNumber);
+    try {
+      const attemptResult = await runPaperHtmlGenerationAttempt({
+        paperDir,
+        promptText,
+        attachedPageImages,
+        evidencePages,
+        options,
+        attemptPaths
       });
-      const repairPromptPath = path.join(repairDir, `attempt-${attempt}.prompt.md`);
-      const repairResponsePath = path.join(repairDir, `attempt-${attempt}.response.txt`);
-      const repairRawPath = path.join(repairDir, `attempt-${attempt}.raw.json`);
-      const repairValidationPath = path.join(repairDir, `attempt-${attempt}.validation.json`);
-      const repairScreenshotPath = path.join(repairDir, `attempt-${attempt}.png`);
-      writeText(repairPromptPath, `${repairPrompt}\n`);
+      const attemptRecord = {
+        attempt: attemptNumber,
+        status: attemptResult.status,
+        attemptDir: attemptPaths.attemptDir,
+        promptPath: attemptPaths.promptPath,
+        htmlPath: attemptPaths.htmlPath,
+        initialHtmlPath: attemptPaths.initialHtmlPath,
+        finalMessagePath: attemptPaths.finalMessagePath,
+        stdoutPath: attemptPaths.codexStdoutPath,
+        stderrPath: attemptPaths.codexStderrPath,
+        htmlValidationPath: attemptPaths.htmlValidationPath,
+        standaloneValidationPath: attemptPaths.standaloneValidationPath,
+        sessionName: attemptResult.sessionName,
+        runtimeStdoutPath: attemptResult.runtimePaths?.stdoutPath || '',
+        runtimeStderrPath: attemptResult.runtimePaths?.stderrPath || '',
+        validationFailureSummary: attemptResult.status === 'passed_validation'
+          ? ''
+          : buildAttemptFailureSummary(attemptResult)
+      };
+      runState.attempts.push(attemptRecord);
+      writePaperRunState(runStatePath, {
+        ...runState,
+        stage: attemptResult.status === 'passed_validation' ? 'publish' : 'generate_retry'
+      });
 
-      let repairRun;
-      let repairedHtml = '';
-      if (options.codexHtmlEnhancementEnabled) {
-        const codexRepairRun = await runCodexHtmlGeneration({
+      if (attemptResult.status !== 'passed_validation') {
+        lastFailureMessage = `attempt ${attemptNumber} failed html validation: ${buildAttemptFailureSummary(attemptResult)}`;
+        continue;
+      }
+
+      copyFileIfExists(attemptPaths.htmlPath, htmlPath);
+      copyFileIfExists(attemptPaths.initialHtmlPath, initialHtmlPath);
+      copyFileIfExists(attemptPaths.finalMessagePath, finalMessagePath);
+      copyFileIfExists(attemptPaths.codexStdoutPath, codexStdoutPath);
+      copyFileIfExists(attemptPaths.codexStderrPath, codexStderrPath);
+      copyFileIfExists(attemptPaths.initialModelMessagePath, initialModelMessagePath);
+      copyFileIfExists(attemptPaths.initialModelRawPath, initialModelRawPath);
+      copyFileIfExists(attemptPaths.htmlValidationScreenshotPath, htmlValidationScreenshotPath);
+      copyFileIfExists(attemptPaths.standaloneValidationScreenshotPath, standaloneValidationScreenshotPath);
+
+      const htmlValidation = {
+        ...attemptResult.htmlValidation,
+        generationAttempt: attemptNumber,
+        screenshotPath: htmlValidationScreenshotPath,
+        validationMode: 'final-standalone'
+      };
+      const standaloneValidation = {
+        ...attemptResult.standaloneValidation,
+        generationAttempt: attemptNumber,
+        screenshotPath: standaloneValidationScreenshotPath,
+        validationMode: 'standalone-rerun'
+      };
+      writeJson(htmlValidationPath, htmlValidation);
+      writeJson(standaloneValidationPath, standaloneValidation);
+
+      selectedAttempt = {
+        ...attemptResult,
+        attemptPaths,
+        htmlValidation,
+        standaloneValidation
+      };
+      break;
+    } catch (error) {
+      lastFailureMessage = error.message;
+      runState.attempts.push({
+        attempt: attemptNumber,
+        status: 'exec_failed',
+        attemptDir: attemptPaths.attemptDir,
+        promptPath: attemptPaths.promptPath,
+        htmlPath: attemptPaths.htmlPath,
+        finalMessagePath: attemptPaths.finalMessagePath,
+        stdoutPath: attemptPaths.codexStdoutPath,
+        stderrPath: attemptPaths.codexStderrPath,
+        runtimeStdoutPath: buildCodexHtmlTmuxRunPaths({
           workingDir: paperDir,
-          targetHtmlPath: htmlPath,
-          finalMessagePath: repairResponsePath,
-          promptText: repairPrompt,
-          attachedPageImages,
-          model: options.codexHtmlModel,
-          reasoningEffort: options.codexHtmlReasoningEffort,
-          timeoutMs: options.codexHtmlTimeoutMs
-        });
-        const repairMessage = fs.existsSync(repairResponsePath) ? fs.readFileSync(repairResponsePath, 'utf8') : codexRepairRun.finalMessage || '';
-        repairRun = {
-          model: options.codexHtmlModel,
-          content: repairMessage,
-          raw: codexRepairRun.stdout || '',
-          source: 'codex-repair'
-        };
-        repairedHtml = cleanHtmlResponse(repairMessage);
-      } else {
-        const legacyRepairRun = await generateHtmlWithFallbacks({
-          apiBaseUrl: options.htmlApiBaseUrl,
-          apiKey: options.htmlApiKey,
-          models: options.htmlModels,
-          promptText: repairPrompt,
-          attachedPageImages,
-          rateLimiter: options.rateLimiter,
-          maxAttemptsPerModel: 1,
-          timeoutMs: options.chatTimeoutMs
-        });
-        repairRun = {
-          ...legacyRepairRun,
-          source: 'legacy-chat-completions'
-        };
-        repairedHtml = cleanHtmlResponse(legacyRepairRun.content);
-      }
-      writeText(repairResponsePath, `${repairRun.content}\n`);
-      writeText(repairRawPath, `${repairRun.raw || ''}\n`);
-      writeText(
-        htmlPath,
-        `${injectEvidenceGallery(replaceFigurePlaceholdersWithEvidence(repairedHtml, evidencePages), evidencePages)}\n`
-      );
-
-      htmlValidation = await validateHtmlWithBrowser({
-        htmlPath,
-        screenshotPath: repairScreenshotPath,
-        evidencePages
+          targetHtmlPath: attemptPaths.htmlPath,
+          finalMessagePath: attemptPaths.finalMessagePath
+        }).stdoutPath,
+        runtimeStderrPath: buildCodexHtmlTmuxRunPaths({
+          workingDir: paperDir,
+          targetHtmlPath: attemptPaths.htmlPath,
+          finalMessagePath: attemptPaths.finalMessagePath
+        }).stderrPath,
+        error: error.message
       });
-      writeJson(repairValidationPath, htmlValidation);
-      repairAttempts.push({
-        attempt,
-        model: repairRun.model,
-        promptPath: repairPromptPath,
-        responsePath: repairResponsePath,
-        rawPath: repairRawPath,
-        validationPath: repairValidationPath,
-        screenshotPath: repairScreenshotPath,
-        ok: htmlValidation.ok
+      writePaperRunState(runStatePath, {
+        ...runState,
+        stage: attemptNumber < DEFAULT_HTML_GENERATION_MAX_ATTEMPTS ? 'generate_retry' : 'failed'
       });
-
-      if (htmlValidation.ok) {
-        break;
-      }
     }
   }
 
-  if (!htmlValidation.ok) {
-    validationFallback = await applyDeterministicFallbackArtifact({
-      paper,
-      meta,
-      openreviewSummary,
-      paperTextPreview: fs.readFileSync(paperTextPreviewPath, 'utf8'),
-      webCoverage,
-      htmlPath,
-      fallbackHtmlPath,
-      metadataPath: fallbackValidationMetaPath,
-      screenshotPath: fallbackValidationScreenshotPath,
-      evidencePages,
-      reason: 'html validation failed after model repair attempts'
+  if (!selectedAttempt) {
+    writePaperRunState(runStatePath, {
+      ...runState,
+      status: 'failed',
+      stage: 'failed',
+      lastFailureMessage
     });
-    htmlValidation = validationFallback.validation;
+    throw new Error(
+      `HTML generation failed after ${DEFAULT_HTML_GENERATION_MAX_ATTEMPTS} fresh attempts: ${lastFailureMessage}`
+    );
   }
 
-  writeJson(htmlValidationPath, {
-    ...htmlValidation,
-    repairAttempts,
-    deterministicFallback: validationFallback
+  writePaperRunState(runStatePath, {
+    ...runState,
+    status: 'completed',
+    stage: 'published',
+    selectedAttempt: selectedAttempt.attemptNumber,
+    generationSource: selectedAttempt.generationSource,
+    generationModel: selectedAttempt.generationModel
   });
-
-  if (!htmlValidation.ok) {
-    throw new Error(`HTML validation failed for ${paper.title}: ${JSON.stringify(htmlValidation)}`);
-  }
-
-  await makeHtmlStandalone(htmlPath);
-  let standaloneValidation = await validateHtmlWithBrowser({
-    htmlPath,
-    screenshotPath: standaloneValidationScreenshotPath,
-    evidencePages
-  });
-  let standaloneFallback = null;
-  if (!standaloneValidation.ok) {
-    standaloneFallback = await applyDeterministicFallbackArtifact({
-      paper,
-      meta,
-      openreviewSummary,
-      paperTextPreview: fs.readFileSync(paperTextPreviewPath, 'utf8'),
-      webCoverage,
-      htmlPath,
-      fallbackHtmlPath,
-      metadataPath: fallbackStandaloneMetaPath,
-      screenshotPath: fallbackStandaloneScreenshotPath,
-      evidencePages,
-      reason: 'standalone html validation failed after inlining local assets',
-      makeStandalone: true
-    });
-    standaloneValidation = standaloneFallback.validation;
-  }
-  writeJson(standaloneValidationPath, {
-    ...standaloneValidation,
-    deterministicFallback: standaloneFallback
-  });
-  if (!standaloneValidation.ok) {
-    throw new Error(`Standalone HTML validation failed for ${paper.title}: ${JSON.stringify(standaloneValidation)}`);
-  }
 
   const paperCard = buildPaperCard({
     paper: {
@@ -1109,8 +1111,8 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     pageImageCount: pageImages.length,
     attachedPageImageCount: attachedPageImages.length,
     evidencePagesPath,
-    generationModel: htmlRun.model,
-    generationSource: htmlRun.source,
+    generationModel: selectedAttempt.generationModel,
+    generationSource: selectedAttempt.generationSource,
     codexEnhancement,
     generationPromptPath: promptPath,
     codexFinalMessagePath: finalMessagePath,
@@ -1120,14 +1122,11 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     paperCardPath,
     paperMeta: meta,
     openreviewSummary,
+    runStatePath,
     standaloneValidationPath,
     webCoverage,
     webCoveragePath,
-    webCoverageMarkdownPath,
-    deterministicFallback: {
-      htmlValidation: validationFallback,
-      standaloneValidation: standaloneFallback
-    }
+    webCoverageMarkdownPath
   };
 }
 
@@ -1171,6 +1170,9 @@ function packageTelegramArtifacts(runPaths, artifactPapers) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (shouldLoadProjectEnv(options)) {
+    loadProjectEnv();
+  }
   loadRuntimeEnv(options.runtimeEnvPath);
   Object.assign(options, resolveRuntimeModelConfig(process.env));
   options.rateLimiter = new MinuteRateLimiter(Number(process.env.RESEARCH_INTEL_RATE_LIMIT_PER_MINUTE || '5'));
@@ -1178,9 +1180,8 @@ async function main() {
     rootDir: ROOT_DIR,
     profileDir: options.profileDir
   });
-  const usingLegacyChatHtmlPath = !options.codexHtmlEnhancementEnabled;
-  if (usingLegacyChatHtmlPath && (!options.htmlApiBaseUrl || !options.htmlApiKey || options.htmlModels.length === 0)) {
-    throw new Error('Missing runtime configuration: keep RESEARCH_INTEL_CODEX_HTML_MODEL enabled for Codex-first HTML generation, or explicitly clear it and provide RESEARCH_INTEL_API_BASE_URL / RESEARCH_INTEL_API_KEY / RESEARCH_INTEL_HTML_MODELS for the legacy path.');
+  if (!options.codexHtmlEnhancementEnabled) {
+    throw new Error('Missing runtime configuration: RESEARCH_INTEL_CODEX_HTML_MODEL must be set for the PDF-first tmux-backed Codex HTML chain.');
   }
 
   const profile = loadProfile(options.profileDir);
@@ -1240,6 +1241,7 @@ async function main() {
   const artifactFailures = [];
   for (const paper of generationQueue) {
     const artifactIndex = artifactPapers.length;
+    const paperDir = path.join(runPaths.papersDir, `${String(artifactIndex + 1).padStart(2, '0')}-${paper.slug}`);
     try {
       artifactPapers.push(await generatePaperArtifacts(
         paper,
@@ -1249,14 +1251,20 @@ async function main() {
         dateString
       ));
     } catch (error) {
-      fs.rmSync(
-        path.join(runPaths.papersDir, `${String(artifactIndex + 1).padStart(2, '0')}-${paper.slug}`),
-        { recursive: true, force: true }
-      );
+      let failureArtifactDir = '';
+      if (fs.existsSync(paperDir)) {
+        const failedPapersDir = path.join(runPaths.runDir, 'failed_papers');
+        ensureDir(failedPapersDir);
+        failureArtifactDir = path.join(failedPapersDir, path.basename(paperDir));
+        fs.rmSync(failureArtifactDir, { recursive: true, force: true });
+        fs.renameSync(paperDir, failureArtifactDir);
+      }
       artifactFailures.push({
         title: paper.title,
         arxivId: paper.arxivId,
-        message: error.message
+        message: error.message,
+        artifactDir: failureArtifactDir ? repoRelativePath(failureArtifactDir) : '',
+        runStatePath: failureArtifactDir ? repoRelativePath(path.join(failureArtifactDir, 'run_state.json')) : ''
       });
     }
 
@@ -1355,12 +1363,15 @@ async function main() {
       title: paper.title,
       published: paper.published,
       htmlPath: repoRelativePath(paper.htmlPath),
+      pdfPath: repoRelativePath(paper.pdfPath),
       artifactDir: repoRelativePath(paper.artifactDir),
-      generationMethod: paper.generationSource || (paper.codexEnhancement?.ok ? 'legacy-chat+codex-enhance' : 'legacy-chat-completions'),
+      generationMethod: paper.generationSource || 'codex-tmux-pdf-first',
       generationModel: paper.generationModel,
       codexEnhancement: paper.codexEnhancement,
       pageImageCount: paper.pageImageCount,
       attachedPageImageCount: paper.attachedPageImageCount,
+      htmlValidationPath: repoRelativePath(paper.htmlValidationPath),
+      standaloneValidationPath: repoRelativePath(paper.standaloneValidationPath),
       branchId: paper.branchId,
       motivationSummary: paper.motivationSummary,
       methodTakeaway: paper.methodTakeaway,
@@ -1548,9 +1559,13 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DEFAULT_HTML_GENERATION_MAX_ATTEMPTS,
+  buildPaperHtmlAttemptPaths,
+  parseArgs,
   desiredPaperCount,
   minimumArtifactCount,
   resolveRuntimeModelConfig,
+  shouldLoadProjectEnv,
   scoreCandidates,
   selectForToday,
   splitDailyPicks

@@ -1,0 +1,86 @@
+<svg width="1600" height="720" viewBox="0 0 1600 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="720" rx="40" fill="#0E1727"/>
+  <rect x="64" y="64" width="1472" height="592" rx="28" fill="#111C30" stroke="#263246" stroke-width="2"/>
+  <text x="96" y="134" fill="#F8FAFC" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="52" font-weight="700">
+    The public mainline now converges on one path
+  </text>
+  <text x="96" y="182" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
+    PDF-first. paper-scoped. tmux-backed Codex. No dual-mode README story.
+  </text>
+
+  <rect x="96" y="250" width="250" height="180" rx="26" fill="#FFF7ED" stroke="#F4C68A" stroke-width="2"/>
+  <text x="128" y="316" fill="#8A4B12" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="38" font-weight="700">
+    paper.pdf
+  </text>
+  <text x="128" y="362" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
+    truth source
+  </text>
+  <text x="128" y="396" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    Aux text and page images
+  </text>
+  <text x="128" y="426" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    can help locate details,
+  </text>
+  <text x="128" y="456" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    but they never outrank the PDF.
+  </text>
+
+  <path d="M370 340H474" stroke="#38BDF8" stroke-width="8" stroke-linecap="round"/>
+  <path d="M450 320L484 340L450 360" stroke="#38BDF8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="498" y="250" width="260" height="180" rx="26" fill="#0D2434" stroke="#38BDF8" stroke-width="2"/>
+  <text x="530" y="314" fill="#E0F2FE" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="700">
+    Paper workspace
+  </text>
+  <text x="530" y="362" fill="#BAE6FD" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    one directory per paper
+  </text>
+  <text x="530" y="394" fill="#BAE6FD" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    current paper only
+  </text>
+  <text x="530" y="426" fill="#BAE6FD" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    no cross-paper dirty context
+  </text>
+
+  <path d="M782 340H886" stroke="#38BDF8" stroke-width="8" stroke-linecap="round"/>
+  <path d="M862 320L896 340L862 360" stroke="#38BDF8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="910" y="250" width="250" height="180" rx="26" fill="#102A27" stroke="#22C55E" stroke-width="2"/>
+  <text x="944" y="314" fill="#DCFCE7" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="700">
+    tmux session
+  </text>
+  <text x="944" y="362" fill="#BBF7D0" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    one session per paper
+  </text>
+  <text x="944" y="394" fill="#BBF7D0" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    isolated Codex context
+  </text>
+  <text x="944" y="426" fill="#BBF7D0" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    completion monitored outside
+  </text>
+
+  <path d="M1184 340H1288" stroke="#38BDF8" stroke-width="8" stroke-linecap="round"/>
+  <path d="M1264 320L1298 340L1264 360" stroke="#38BDF8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="1312" y="250" width="192" height="180" rx="26" fill="#172337" stroke="#F97316" stroke-width="2"/>
+  <text x="1346" y="314" fill="#FFEDD5" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="700">
+    Codex
+  </text>
+  <text x="1346" y="362" fill="#FED7AA" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    writes HTML
+  </text>
+  <text x="1346" y="394" fill="#FED7AA" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    with fresh attempts
+  </text>
+
+  <rect x="96" y="500" width="1410" height="108" rx="24" fill="#172337" stroke="#243041" stroke-width="2"/>
+  <text x="132" y="548" fill="#F8FAFC" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24" font-weight="600">
+    Target landing zone when the chain succeeds:
+  </text>
+  <text x="708" y="548" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
+    index.html  +  manifest.json  +  validation json/png  +  sidecar metadata
+  </text>
+  <text x="132" y="588" fill="#94A3B8" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
+    Public claims should stay below the current verification boundary on baohe until the smoke tests produce those files on demand.
+  </text>
+</svg>
