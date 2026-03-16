@@ -1478,7 +1478,7 @@ async function runCodexHtmlGeneration({
   promptText,
   attachedPageImages,
   model = 'gpt-5.4',
-  timeoutMs = 120000
+  timeoutMs = 300000
 }) {
   const args = [
     'exec',

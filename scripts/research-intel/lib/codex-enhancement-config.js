@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const DEFAULT_CODEX_HTML_TIMEOUT_MS = 120000;
+const DEFAULT_CODEX_HTML_TIMEOUT_MS = 300000;
 const DEFAULT_CODEX_HTML_MODEL = 'gpt-5.4';
 
 function parsePositiveInt(value, fallback) {
