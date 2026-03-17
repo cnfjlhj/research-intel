@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildBriefMarkdown,
+  buildReadingRouteMarkdown,
   buildMethodTreeDeltaMarkdown,
   buildTelegramMessage,
   findRelatedSeeds
@@ -146,6 +147,27 @@ test('buildMethodTreeDeltaMarkdown summarizes method-tree updates and paper card
   assert.match(markdown, /SAHOO/);
   assert.match(markdown, /Gödel Agent/);
   assert.match(markdown, /recursive self-improvement/);
+});
+
+test('buildReadingRouteMarkdown renders route roles and compare axes', () => {
+  const markdown = buildReadingRouteMarkdown({
+    date: '2026-03-17',
+    routeLogic: '先建立问题定义，再看主方法。',
+    orderedPapers: [
+      {
+        rank: 1,
+        title: 'Paper A',
+        routeRole: 'prerequisite',
+        whyHere: '先定义问题边界',
+        compareAxes: ['problem framing', 'feedback loop']
+      }
+    ]
+  });
+
+  assert.match(markdown, /# 2026-03-17 Reading Route/);
+  assert.match(markdown, /prerequisite/);
+  assert.match(markdown, /problem framing/);
+  assert.match(markdown, /先定义问题边界/);
 });
 
 test('findRelatedSeeds ignores generic agent overlap and prefers method-line anchors', () => {

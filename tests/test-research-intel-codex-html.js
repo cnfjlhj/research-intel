@@ -152,6 +152,7 @@ test('runCodexHtmlGeneration completes through a tmux-backed fake codex binary',
     '  esac',
     'done',
     'cat >/dev/null',
+    'sleep 1',
     'cat <<\'HTML\' > "$output_path"',
     '<!DOCTYPE html><html><body><h1>研究动机</h1><h2>数学表示及建模</h2><h2>实验方法与实验设计</h2><h2>实验结果及核心结论</h2><h2>评论</h2><h2>Rebuttal 过程（如果有）</h2><h2>One More Thing</h2></body></html>',
     'HTML',
@@ -174,10 +175,328 @@ test('runCodexHtmlGeneration completes through a tmux-backed fake codex binary',
     });
 
     assert.match(result.sessionName, /^research-intel-html-/);
+    assert.equal(result.status.status, 'completed');
+    assert.equal(result.status.stdoutBytes > 0, true);
     assert.equal(fs.existsSync(targetHtmlPath), true);
     assert.match(fs.readFileSync(targetHtmlPath, 'utf8'), /<!DOCTYPE html>/);
     assert.equal(result.stdout, 'fake stdout');
     assert.equal(result.stderr, 'fake stderr');
+  } finally {
+    process.env.PATH = previousPath;
+  }
+});
+
+test('runCodexHtmlGeneration recovers working-dir index.html when codex skips final message output', async t => {
+  const tmuxCheck = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
+  if (tmuxCheck.status !== 0) {
+    t.skip('tmux is not available in this environment');
+    return;
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-codex-html-fallback-'));
+  const binDir = path.join(tempDir, 'bin');
+  const targetHtmlPath = path.join(tempDir, 'generation_attempts', 'attempt-01', 'index.html');
+  const finalMessagePath = path.join(tempDir, 'generation_attempts', 'attempt-01', 'model-response.txt');
+  const fakeCodexPath = path.join(binDir, 'codex');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(fakeCodexPath, [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    '    -o|-i|-m|-C|-c|-s)',
+    '      shift 2',
+    '      ;;',
+    '    exec|--ephemeral|--skip-git-repo-check|--dangerously-bypass-approvals-and-sandbox|-)',
+    '      shift',
+    '      ;;',
+    '    *)',
+    '      shift',
+    '      ;;',
+    '  esac',
+    'done',
+    'cat >/dev/null',
+    'cat <<\'HTML\' > index.html',
+    '<!DOCTYPE html><html><body><h1>研究动机</h1><h2>数学表示及建模</h2><h2>实验方法与实验设计</h2><h2>实验结果及核心结论</h2><h2>评论</h2><h2>Rebuttal 过程（如果有）</h2><h2>One More Thing</h2></body></html>',
+    'HTML',
+    'printf "fallback stderr" >&2'
+  ].join('\n'), 'utf8');
+  fs.chmodSync(fakeCodexPath, 0o755);
+
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${previousPath}`;
+
+  try {
+    const result = await runCodexHtmlGeneration({
+      workingDir: tempDir,
+      targetHtmlPath,
+      finalMessagePath,
+      promptText: 'Generate a page by editing index.html directly.',
+      attachedPageImages: [],
+      timeoutMs: 5000
+    });
+
+    assert.equal(result.recoveredFromWorkingDir, true);
+    assert.equal(result.recoveredWorkingDirHtmlPath, path.join(tempDir, 'index.html'));
+    assert.equal(fs.existsSync(finalMessagePath), true);
+    assert.equal(fs.existsSync(targetHtmlPath), true);
+    assert.match(fs.readFileSync(finalMessagePath, 'utf8'), /<!DOCTYPE html>/);
+    assert.match(fs.readFileSync(targetHtmlPath, 'utf8'), /<!DOCTYPE html>/);
+  } finally {
+    process.env.PATH = previousPath;
+  }
+});
+
+test('runCodexHtmlGeneration recovers working-dir index.html after timeout', async t => {
+  const tmuxCheck = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
+  if (tmuxCheck.status !== 0) {
+    t.skip('tmux is not available in this environment');
+    return;
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-codex-html-timeout-fallback-'));
+  const binDir = path.join(tempDir, 'bin');
+  const targetHtmlPath = path.join(tempDir, 'generation_attempts', 'attempt-01', 'index.html');
+  const finalMessagePath = path.join(tempDir, 'generation_attempts', 'attempt-01', 'model-response.txt');
+  const fakeCodexPath = path.join(binDir, 'codex');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(fakeCodexPath, [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    '    -o|-i|-m|-C|-c|-s)',
+    '      shift 2',
+    '      ;;',
+    '    exec|--ephemeral|--skip-git-repo-check|--dangerously-bypass-approvals-and-sandbox|-)',
+    '      shift',
+    '      ;;',
+    '    *)',
+    '      shift',
+    '      ;;',
+    '  esac',
+    'done',
+    'cat >/dev/null',
+    'cat <<\'HTML\' > index.html',
+    '<!DOCTYPE html><html><body><h1>研究动机</h1><h2>数学表示及建模</h2><h2>实验方法与实验设计</h2><h2>实验结果及核心结论</h2><h2>评论</h2><h2>Rebuttal 过程（如果有）</h2><h2>One More Thing</h2></body></html>',
+    'HTML',
+    'printf "timeout fallback stderr" >&2',
+    'sleep 3'
+  ].join('\n'), 'utf8');
+  fs.chmodSync(fakeCodexPath, 0o755);
+
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${previousPath}`;
+
+  try {
+    const result = await runCodexHtmlGeneration({
+      workingDir: tempDir,
+      targetHtmlPath,
+      finalMessagePath,
+      promptText: 'Generate a page, but imagine provider-side completion never terminates cleanly.',
+      attachedPageImages: [],
+      timeoutMs: 500
+    });
+
+    assert.equal(result.recoveredFromWorkingDir, true);
+    assert.equal(fs.existsSync(finalMessagePath), true);
+    assert.equal(fs.existsSync(targetHtmlPath), true);
+    assert.match(fs.readFileSync(finalMessagePath, 'utf8'), /<!DOCTYPE html>/);
+  } finally {
+    process.env.PATH = previousPath;
+  }
+});
+
+test('runCodexHtmlGeneration recovers working-dir index.html after post-write idle instead of waiting for full timeout', async t => {
+  const tmuxCheck = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
+  if (tmuxCheck.status !== 0) {
+    t.skip('tmux is not available in this environment');
+    return;
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-codex-html-idle-fallback-'));
+  const binDir = path.join(tempDir, 'bin');
+  const targetHtmlPath = path.join(tempDir, 'generation_attempts', 'attempt-01', 'index.html');
+  const finalMessagePath = path.join(tempDir, 'generation_attempts', 'attempt-01', 'model-response.txt');
+  const fakeCodexPath = path.join(binDir, 'codex');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(fakeCodexPath, [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    '    -o|-i|-m|-C|-c|-s)',
+    '      shift 2',
+    '      ;;',
+    '    exec|--ephemeral|--skip-git-repo-check|--dangerously-bypass-approvals-and-sandbox|-)',
+    '      shift',
+    '      ;;',
+    '    *)',
+    '      shift',
+    '      ;;',
+    '  esac',
+    'done',
+    'cat >/dev/null',
+    'cat <<\'HTML\' > index.html',
+    '<!DOCTYPE html><html><body><h1>研究动机</h1><h2>数学表示及建模</h2><h2>实验方法与实验设计</h2><h2>实验结果及核心结论</h2><h2>评论</h2><h2>Rebuttal 过程（如果有）</h2><h2>One More Thing</h2></body></html>',
+    'HTML',
+    'printf "idle fallback stderr" >&2',
+    'sleep 30'
+  ].join('\n'), 'utf8');
+  fs.chmodSync(fakeCodexPath, 0o755);
+
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${previousPath}`;
+
+  try {
+    const startedAt = Date.now();
+    const result = await runCodexHtmlGeneration({
+      workingDir: tempDir,
+      targetHtmlPath,
+      finalMessagePath,
+      promptText: 'Generate a page, then hang forever after writing index.html.',
+      attachedPageImages: [],
+      timeoutMs: 5000,
+      workingDirRecoveryIdleMs: 500
+    });
+    const durationMs = Date.now() - startedAt;
+
+    assert.equal(result.recoveredFromWorkingDir, true);
+    assert.equal(result.status.status, 'recovered_from_working_dir');
+    assert.equal(fs.existsSync(finalMessagePath), true);
+    assert.equal(fs.existsSync(targetHtmlPath), true);
+    assert.match(fs.readFileSync(finalMessagePath, 'utf8'), /<!DOCTYPE html>/);
+    assert.ok(durationMs < 5000, `expected early recovery before timeout, got ${durationMs}ms`);
+  } finally {
+    process.env.PATH = previousPath;
+  }
+});
+
+test('runCodexHtmlGeneration allows a longer silent window after codex enters html write phase', async t => {
+  const tmuxCheck = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
+  if (tmuxCheck.status !== 0) {
+    t.skip('tmux is not available in this environment');
+    return;
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-codex-html-write-phase-'));
+  const binDir = path.join(tempDir, 'bin');
+  const targetHtmlPath = path.join(tempDir, 'generation_attempts', 'attempt-01', 'index.html');
+  const finalMessagePath = path.join(tempDir, 'generation_attempts', 'attempt-01', 'model-response.txt');
+  const fakeCodexPath = path.join(binDir, 'codex');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(fakeCodexPath, [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'output_path=""',
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    '    -o)',
+    '      output_path="$2"',
+    '      shift 2',
+    '      ;;',
+    '    -i|-m|-C|-c|-s)',
+    '      shift 2',
+    '      ;;',
+    '    exec|--ephemeral|--skip-git-repo-check|--dangerously-bypass-approvals-and-sandbox|-)',
+    '      shift',
+    '      ;;',
+    '    *)',
+    '      shift',
+    '      ;;',
+    '  esac',
+    'done',
+    'cat >/dev/null',
+    'printf "准备开始落文件了\\n" >&2',
+    'printf "开始写 index.html。\\n" >&2',
+    'sleep 4',
+    'mkdir -p "$(dirname "$output_path")"',
+    'cat <<\'HTML\' > "$output_path"',
+    '<!DOCTYPE html><html><body><h1>研究动机</h1><h2>数学表示及建模</h2><h2>实验方法与实验设计</h2><h2>实验结果及核心结论</h2><h2>评论</h2><h2>Rebuttal 过程（如果有）</h2><h2>One More Thing</h2></body></html>',
+    'HTML'
+  ].join('\n'), 'utf8');
+  fs.chmodSync(fakeCodexPath, 0o755);
+
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${previousPath}`;
+
+  try {
+    const result = await runCodexHtmlGeneration({
+      workingDir: tempDir,
+      targetHtmlPath,
+      finalMessagePath,
+      promptText: 'Generate a page, then spend a while silently producing the final html.',
+      attachedPageImages: [],
+      timeoutMs: 8000,
+      noOutputStallMs: 1000,
+      writePhaseNoOutputStallMs: 5000
+    });
+
+    assert.equal(result.status.status, 'completed');
+    assert.equal(fs.existsSync(finalMessagePath), true);
+    assert.equal(fs.existsSync(targetHtmlPath), true);
+    assert.match(fs.readFileSync(finalMessagePath, 'utf8'), /<!DOCTYPE html>/);
+    assert.match(fs.readFileSync(targetHtmlPath, 'utf8'), /<!DOCTYPE html>/);
+  } finally {
+    process.env.PATH = previousPath;
+  }
+});
+
+test('runCodexHtmlGeneration fails fast when codex stalls before writing html', async t => {
+  const tmuxCheck = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
+  if (tmuxCheck.status !== 0) {
+    t.skip('tmux is not available in this environment');
+    return;
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-codex-html-stall-'));
+  const binDir = path.join(tempDir, 'bin');
+  const targetHtmlPath = path.join(tempDir, 'generation_attempts', 'attempt-01', 'index.html');
+  const finalMessagePath = path.join(tempDir, 'generation_attempts', 'attempt-01', 'model-response.txt');
+  const fakeCodexPath = path.join(binDir, 'codex');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(fakeCodexPath, [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    '    -o|-i|-m|-C|-c|-s)',
+    '      shift 2',
+    '      ;;',
+    '    exec|--ephemeral|--skip-git-repo-check|--dangerously-bypass-approvals-and-sandbox|-)',
+    '      shift',
+    '      ;;',
+    '    *)',
+    '      shift',
+    '      ;;',
+    '  esac',
+    'done',
+    'cat >/dev/null',
+    'printf "stalling before html" >&2',
+    'sleep 30'
+  ].join('\n'), 'utf8');
+  fs.chmodSync(fakeCodexPath, 0o755);
+
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${previousPath}`;
+
+  try {
+    const startedAt = Date.now();
+    await assert.rejects(
+      runCodexHtmlGeneration({
+        workingDir: tempDir,
+        targetHtmlPath,
+        finalMessagePath,
+        promptText: 'Generate a page, but get stuck before any html is written.',
+        attachedPageImages: [],
+        timeoutMs: 5000,
+        noOutputStallMs: 500
+      }),
+      /stalled without new output/
+    );
+    const durationMs = Date.now() - startedAt;
+    assert.ok(durationMs < 5000, `expected fast failure before timeout, got ${durationMs}ms`);
+    assert.equal(fs.existsSync(targetHtmlPath), false);
   } finally {
     process.env.PATH = previousPath;
   }
@@ -242,6 +561,11 @@ test('buildCodexInlineHtmlPrompt forces raw html-only output', () => {
   assert.match(prompt, /证据优先级/);
   assert.match(prompt, /paper\.pdf 是唯一真相来源/);
   assert.match(prompt, /如果辅助材料与 paper\.pdf 冲突，以 paper\.pdf 为准/);
+  assert.match(prompt, /公开细节覆盖率/);
+  assert.match(prompt, /如果论文公开了 prompt、system prompt、instruction template、超参数、数据切分、评估设置/);
+  assert.match(prompt, /如果论文没有公开某项细节，要明确写“论文未公开”或“不确定”/);
+  assert.match(prompt, /paper_meta\.json 里如果存在 recommendation_context/);
+  assert.match(prompt, /user_profile/);
   assert.match(prompt, /你可以读取当前论文工作目录里的这些本地文件/);
   assert.match(prompt, /\/paper\/paper\.pdf/);
   assert.match(prompt, /\/paper\/paper_text\.txt/);
@@ -252,10 +576,47 @@ test('buildCodexInlineHtmlPrompt forces raw html-only output', () => {
   assert.match(prompt, /如果论文没有 OpenReview/);
   assert.match(prompt, /行内公式统一使用 .*\\\( ... \\\)/);
   assert.match(prompt, /块级公式统一使用 \$\$ ... \$\$/);
+  assert.match(prompt, /这是一次非交互的一次性生成/);
+  assert.match(prompt, /你已经被授权直接完成最终交付/);
+  assert.match(prompt, /不要再请求确认、许可、回复“确认”/);
+  assert.match(prompt, /不要尝试落盘修改本地文件；只需要把完整的 index\.html 源码作为最终回复输出/);
   assert.match(prompt, /不得把页面图像里看不清的表格数字编造成具体数值/);
   assert.match(prompt, /所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文/);
-  assert.match(prompt, /Paper Overview/);
   assert.doesNotMatch(prompt, /<html><\/html>/);
+});
+
+test('buildCodexInlineHtmlPrompt includes layered context and keeps paper pdf highest priority', () => {
+  const prompt = buildCodexInlineHtmlPrompt({
+    templateHtml: '<html></html>',
+    paperPdfPath: '/paper/paper.pdf',
+    paperMetaPath: '/paper/paper_meta.json',
+    paperMetaJson: '{"title":"x"}',
+    paperTextPath: '/paper/paper_text.txt',
+    paperTextPreviewPath: '/paper/paper_text_preview.txt',
+    paperTextPreview: 'body',
+    openreviewSummaryPath: '/paper/openreview_summary.md',
+    openreviewSummary: 'none',
+    pageImagesDir: '/paper/pages',
+    pageTextsDir: '/paper/page_texts',
+    pageImageCount: 3,
+    routeContextJson: JSON.stringify({
+      route_logic: '先基础，再主方法。',
+      ordered_paper_ids: ['paper:a', 'paper:b']
+    }),
+    dependencyCardsJson: JSON.stringify([
+      {
+        paper_id: 'paper:a',
+        title: 'Paper A',
+        compare_axes: ['feedback loop']
+      }
+    ])
+  });
+
+  assert.match(prompt, /机器可读补充上下文/);
+  assert.match(prompt, /前序依赖卡摘要/);
+  assert.match(prompt, /feedback loop/);
+  assert.match(prompt, /当前 paper\.pdf 仍然高于所有前序依赖卡/);
+  assert.match(prompt, /不要让这些前序依赖卡改变页面的主叙事重心/);
 });
 
 test('buildHtmlRepairPrompt patches the current html against validation findings', () => {
@@ -297,6 +658,9 @@ test('buildHtmlRepairPrompt patches the current html against validation findings
   assert.match(prompt, /\/paper\/paper_text\.txt/);
   assert.match(prompt, /如果论文没有 OpenReview/);
   assert.match(prompt, /不要因为修一个 JS\/KaTeX 问题把整页内容重写/);
+  assert.match(prompt, /这是一次非交互的一次性修补/);
+  assert.match(prompt, /你已经被授权直接输出最终 HTML/);
+  assert.match(prompt, /不要说“如果你确认我再继续”之类的话/);
   assert.match(prompt, /Tailwind CDN/);
   assert.match(prompt, /不要机械复制那一大段 base64 图库/);
   assert.match(prompt, /所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文/);
@@ -342,6 +706,9 @@ test('buildHtmlEnhancementPrompt preserves the existing draft structure while as
   assert.match(prompt, /真实页面证据/);
   assert.match(prompt, /web coverage/);
   assert.match(prompt, /evidence manifest/);
+  assert.match(prompt, /这是一次非交互的一次性增强/);
+  assert.match(prompt, /你已经被授权直接输出最终 HTML/);
+  assert.match(prompt, /不要说“如果你确认我再继续”之类的话/);
   assert.match(prompt, /研究动机/);
   assert.match(prompt, /评论/);
   assert.match(prompt, /placeholder|占位/);
@@ -693,6 +1060,20 @@ test('findPlaceholderMarkers ignores contextual discussion of source-paper place
   assert.deepEqual(findPlaceholderMarkers(html), []);
 });
 
+test('findPlaceholderMarkers ignores benign Chinese technical phrases containing 占位', () => {
+  const html = [
+    '<!DOCTYPE html>',
+    '<html><body>',
+    '<h2>实验结果及核心结论</h2>',
+    '<table><tbody>',
+    '<tr><td>payload 在向量空间中形成占位优势，未来无关查询也可能被挟持</td></tr>',
+    '</tbody></table>',
+    '</body></html>'
+  ].join('');
+
+  assert.deepEqual(findPlaceholderMarkers(html), []);
+});
+
 test('resolveBrowserExecutablePath prefers explicit env override and known system browser paths', () => {
   const explicit = resolveBrowserExecutablePath({
     env: { RESEARCH_INTEL_CHROME_PATH: '/custom/chrome' },
@@ -731,6 +1112,28 @@ test('resolveBrowserExecutablePath skips broken overrides and falls back to Play
   });
 
   assert.equal(resolved, '/pw-cache/chromium-1208/chrome-linux64/chrome');
+});
+
+test('resolveBrowserExecutablePath falls back to research-intel browser cache roots', () => {
+  const resolved = resolveBrowserExecutablePath({
+    env: {
+      HOME: '/home/tester'
+    },
+    existsSync: filePath =>
+      filePath === '/home/tester/.cache/research-intel-browser/chrome/linux-146.0.7680.80/chrome-linux64/chrome',
+    realpathSync: filePath => filePath,
+    readdirSync: dirPath => {
+      if (dirPath === '/home/tester/.cache/research-intel-browser/chrome') {
+        return ['linux-146.0.7680.80'];
+      }
+      return [];
+    }
+  });
+
+  assert.equal(
+    resolved,
+    '/home/tester/.cache/research-intel-browser/chrome/linux-146.0.7680.80/chrome-linux64/chrome'
+  );
 });
 
 test('normalizeLocalImageAssetRefs rewrites file urls and zero-padded page refs to real relative assets', () => {

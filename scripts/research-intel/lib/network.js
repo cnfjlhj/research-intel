@@ -145,11 +145,26 @@ function buildPaperCard({ paper, meta, openreviewSummary, dateString }) {
   const coverageLinks = uniqueStrings((paper?.webCoverage?.coverage || []).map(item => item.url));
   const openreviewForumUrl = meta?.openreview?.forum_url || '';
   const openreviewPdfUrl = meta?.openreview?.pdf_url || '';
+  const routeRole = String(paper?.routeRole || '').trim();
+  const routeRank = Number.isFinite(Number(paper?.rank)) ? Number(paper.rank) : null;
+  const dependencyPaperIds = uniqueStrings(paper?.dependencyPaperIds || []);
+  const compareAxes = uniqueStrings(paper?.compareAxes || []);
+  const whyRelevantToCurrent = String(
+    paper?.whyRelevantToCurrent
+    || paper?.whyHere
+    || paper?.readingReason
+    || ''
+  ).trim();
 
   return {
     paper_id: buildPaperIdentifier(paper, meta),
     title: meta?.title || paper?.title || '',
     date: dateString,
+    route_role: routeRole,
+    route_rank: routeRank,
+    dependency_paper_ids: dependencyPaperIds,
+    compare_axes: compareAxes,
+    why_relevant_to_current: whyRelevantToCurrent,
     summary_anchor: summarizeAnchor(abstract) || summarizeAnchor(recommendation.reason_today) || paper?.title || '',
     core_problem: coreProblem,
     key_mechanisms: methodTags.slice(0, 4),

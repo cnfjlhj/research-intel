@@ -19,11 +19,22 @@ function buildPaperSlug(title) {
     .slice(0, 120);
 }
 
+function buildRouteArtifactPaths(runDir) {
+  return {
+    readingRouteJsonPath: path.join(runDir, 'reading_route.json'),
+    readingRouteMarkdownPath: path.join(runDir, 'reading_route.md'),
+    dependencyGraphPath: path.join(runDir, 'dependency_graph.json'),
+    dependencyCardsDir: path.join(runDir, 'dependency_cards'),
+    sessionContextsDir: path.join(runDir, 'session_contexts')
+  };
+}
+
 function buildRunPaths(baseDir, dateString) {
   const runDir = path.join(baseDir, 'daily', dateString);
   return {
     runDir,
     papersDir: path.join(runDir, 'papers'),
+    ...buildRouteArtifactPaths(runDir),
     packagePath: path.join(runDir, `research-intelligence-${dateString}.tar.gz`)
   };
 }
@@ -34,6 +45,7 @@ function buildRecordPaths(recordsDir, dateString) {
   return {
     runDir,
     knowledgeDir,
+    ...buildRouteArtifactPaths(runDir),
     methodTreeJsonPath: path.join(knowledgeDir, 'method_tree.json'),
     methodTreeMarkdownPath: path.join(knowledgeDir, 'method_tree.md')
   };

@@ -556,6 +556,9 @@ function collectDailySnapshots(rootDir) {
         deliveryStatus: readJson(path.join(runDir, 'delivery_status.json'), {}),
         briefPath: path.join(runDir, 'brief.md'),
         readingOrderPath: path.join(runDir, 'reading_order.md'),
+        readingRoutePath: path.join(runDir, 'reading_route.md'),
+        readingRouteJsonPath: path.join(runDir, 'reading_route.json'),
+        dependencyGraphPath: path.join(runDir, 'dependency_graph.json'),
         dailyCurationPath: path.join(runDir, 'daily_curation.json'),
         methodTreePath: path.join(runDir, 'method_tree.md'),
         methodTreeDeltaPath: path.join(runDir, 'method_tree_delta.md')
@@ -654,11 +657,13 @@ function loadRuntimeState(rootDir) {
 function buildPaperLinks(rootDir, paper) {
   const htmlPath = paper.htmlPath || paper.manifestHtmlPath || '';
   const paperCardPath = paper.paperCardPath || paper.paperCard?.paperCardPath || '';
+  const dependencyCardPath = paper.dependencyCardPath || paper.paperCard?.dependency_card_path || '';
   const pdfPath = paper.paperCard?.source_links?.arxiv_pdf || paper.pdfPath || paper.pdfUrl || '';
 
   return {
     htmlUrl: buildFileUrl(rootDir, htmlPath),
     paperCardUrl: buildFileUrl(rootDir, paperCardPath),
+    dependencyCardUrl: buildFileUrl(rootDir, dependencyCardPath),
     pdfUrl: /^https?:\/\//i.test(pdfPath) ? pdfPath : buildFileUrl(rootDir, pdfPath),
     hjfyUrl: buildHjfyUrl(paper),
     htmlPath: resolveRepoPath(rootDir, htmlPath)
@@ -730,11 +735,12 @@ function renderPaperInsightCard(rootDir, paper, index) {
 
   return [
     '<article class="paper-card">',
-    `<div class="meta-row"><span class="tag">Paper ${index + 1}</span>${paper.readingStage ? `<span class="tag">${escapeHtml(paper.readingStage)}</span>` : ''}${renderEvidenceTags(paper)}</div>`,
+    `<div class="meta-row"><span class="tag">Paper ${index + 1}</span>${paper.readingStage ? `<span class="tag">${escapeHtml(paper.readingStage)}</span>` : ''}${paper.routeRole ? `<span class="tag">route ${escapeHtml(paper.routeRole)}</span>` : ''}${Array.isArray(paper.dependencyPaperIds) && paper.dependencyPaperIds.length > 0 ? `<span class="tag">依赖 ${escapeHtml(String(paper.dependencyPaperIds.length))}</span>` : ''}${renderEvidenceTags(paper)}</div>`,
     `<h3>${escapeHtml(paper.title || `Paper ${index + 1}`)}</h3>`,
     `<p><strong>研究动机：</strong>${escapeHtml(summarizePaperMotivation(paper))}</p>`,
     `<p><strong>为什么今天看：</strong>${escapeHtml(paper.reasonWhyToday || '暂无')}</p>`,
     `<p><strong>排序理由：</strong>${escapeHtml(paper.readingReason || '暂无')}</p>`,
+    paper.routeRole ? `<p class="muted"><strong>Route Role：</strong>${escapeHtml(paper.routeRole)}${paper.routeRank ? ` / #${escapeHtml(String(paper.routeRank))}` : ''}</p>` : '',
     `<p class="muted"><strong>方法切口：</strong>${escapeHtml(summarizePaperMethod(paper))}</p>`,
     (paper.relatedSeeds || []).length > 0 ? `<p class="muted"><strong>关联锚点：</strong>${escapeHtml((paper.relatedSeeds || []).map(seed => seed.title).join('；'))}</p>` : '',
     '<div class="actions">',
@@ -742,6 +748,7 @@ function renderPaperInsightCard(rootDir, paper, index) {
     links.hjfyUrl ? `<a class="button secondary" href="${links.hjfyUrl}" target="_blank" rel="noreferrer">双栏对照</a>` : '',
     links.pdfUrl ? `<a class="button secondary" href="${links.pdfUrl}" target="_blank" rel="noreferrer">原始 PDF</a>` : '',
     links.paperCardUrl ? `<a class="button ghost" href="${links.paperCardUrl}" target="_blank" rel="noreferrer">Paper Card</a>` : '',
+    links.dependencyCardUrl ? `<a class="button ghost" href="${links.dependencyCardUrl}" target="_blank" rel="noreferrer">Dependency Card</a>` : '',
     externalCode,
     externalBlogs,
     externalCoverage,
@@ -1149,6 +1156,10 @@ function renderDailyDetail(rootDir, date) {
     '        <section class="split">',
     `          <div class="panel"><div class="section-heading"><h2>Raw Brief</h2><a class="button ghost" href="${buildFileUrl(rootDir, snapshot.briefPath)}" target="_blank" rel="noreferrer">原文件</a></div><div class="content-prose">${markdownToHtml(readText(snapshot.briefPath, '暂无简报。'), rootDir)}</div></div>`,
     `          <div class="panel"><div class="section-heading"><h2>Raw Reading Order</h2><a class="button ghost" href="${buildFileUrl(rootDir, snapshot.readingOrderPath)}" target="_blank" rel="noreferrer">原文件</a></div><div class="content-prose">${markdownToHtml(readText(snapshot.readingOrderPath, '暂无阅读顺序。'), rootDir)}</div></div>`,
+    '        </section>',
+    '        <section class="split">',
+    `          <div class="panel"><div class="section-heading"><h2>Raw Reading Route</h2><div class="actions"><a class="button ghost" href="${buildFileUrl(rootDir, snapshot.readingRoutePath)}" target="_blank" rel="noreferrer">reading_route.md</a><a class="button ghost" href="${buildFileUrl(rootDir, snapshot.readingRouteJsonPath)}" target="_blank" rel="noreferrer">reading_route.json</a></div></div><div class="content-prose">${markdownToHtml(readText(snapshot.readingRoutePath, '暂无 reading route。'), rootDir)}</div></div>`,
+    `          <div class="panel"><div class="section-heading"><h2>Dependency Graph</h2><a class="button ghost" href="${buildFileUrl(rootDir, snapshot.dependencyGraphPath)}" target="_blank" rel="noreferrer">dependency_graph.json</a></div><div class="content-prose"><p>这份 machine-readable 图只保留 backward-only 依赖边，用于给后续单篇 HTML 提供受控补充上下文。</p><pre>${escapeHtml(JSON.stringify(readJson(snapshot.dependencyGraphPath, { edges: [], maxInDegree: 0 }), null, 2))}</pre></div></div>`,
     '        </section>'
   ].join('\n');
 

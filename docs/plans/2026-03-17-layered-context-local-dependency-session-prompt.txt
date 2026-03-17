@@ -1,0 +1,257 @@
+<context>
+你现在只处理 `research-intel`。
+
+仓库路径：
+- 本地仓库：`/home/cnfjlhj/projects/research-intel`
+- 运行与部署真相：`baohe:/root/projects/research-intel`
+- GitHub 同步目标：`https://github.com/cnfjlhj/research-intel`
+
+重要说明：
+- 这不是另起炉灶，也不是重写系统。
+- 当前已经有一个“能用版本”，并且主链已经是 `PDF-first / paper-scoped / tmux-backed Codex`。
+- 之前已经实现并验证过的能力包括：
+  - 每篇论文独立工作目录
+  - 每篇论文独立 tmux Codex session
+  - 每篇论文产出 `index.html`
+  - 每篇论文产出 `paper_card.json`
+  - 每篇论文产出 `html_validation.json`
+  - 每篇论文产出 `standalone_validation.json`
+- 也就是说，旧版本已经做到了“单篇隔离生成”。
+- 这次要补的是“阅读链语义层”，不是推倒重来。
+
+你必须先阅读这两个文件：
+- `/home/cnfjlhj/projects/research-intel/docs/流程与主链约束.md`
+- `/home/cnfjlhj/projects/research-intel/docs/plans/2026-03-17-layered-context-local-dependency.md`
+
+如果两者有冲突：
+- 设计边界以 `流程与主链约束.md` 为准
+- 任务拆分与执行顺序以 `2026-03-17-layered-context-local-dependency.md` 为准
+</context>
+
+<current_system>
+当前系统真实状态：
+
+1. 入口层
+- `cron -> scripts/research-intel/run-daily.sh`
+- `Web -> POST /research-intel/actions/run`
+- `scheduler-loop.js -> codex-supervisor.js / verify-daily.js`
+
+2. 当前主链
+- `codex-supervisor.js` 负责日级 worker、runtime 状态、tmux、heartbeat
+- 日级 worker 默认会执行一条日级流水线，当前 prompt 明确允许并鼓励直接调用 `daily-run.js`
+- `daily-run.js` 负责：
+  - 候选发现
+  - 选文
+  - 单篇论文 artifact 生成
+  - daily curation
+  - manifest / brief / reading_order / method_tree 写回
+  - Telegram 打包与投递状态
+- 单篇论文当前已经是：
+  - `paper.pdf` 为真相源
+  - 每篇独立 paper workspace
+  - 每篇独立 tmux Codex session
+  - fresh attempt 隔离在 `generation_attempts/attempt-XX/`
+  - 浏览器校验后再 publish
+
+3. 当前版本已经有，但这次不需要重做的东西
+- `PDF-first`
+- `paper-scoped`
+- `tmux-backed`
+- `index.html + paper_card + validation` 单篇主链
+- 日报、records、Web 展示的基本框架
+
+4. 当前版本还没有的东西
+- `reading route` 作为前置运行输入
+- `局部依赖图`
+- `dependency card`
+- `session context` 审计文件
+- 把前序论文作为“结构化依赖卡”注入后续论文 prompt
+- 新语义产物在 `work/` 与 `research-intel-records/` 的双写
+</current_system>
+
+<task>
+请使用 `executing-plans`，按
+`/home/cnfjlhj/projects/research-intel/docs/plans/2026-03-17-layered-context-local-dependency.md`
+逐任务执行。
+
+这次实现的目标是：
+
+在现有可用主链上，增量补上“分层上下文 + 局部依赖图”这一层语义能力，使系统从：
+- `isolated per-paper generation`
+
+升级为：
+- `isolated per-paper generation + route-aware layered context`
+
+也就是：
+- 每篇论文仍然独立 session
+- 但生成第 i 篇时，可以带入最相关的前序 0..3 篇 dependency cards
+- 前序依赖只能是结构化卡片，不能是原始聊天记录
+- 当前论文若与前序论文冲突，必须以当前 `paper.pdf` 为准
+</task>
+
+<requirements>
+硬约束：
+
+1. 只处理 `research-intel`
+- 不要碰其他项目
+- 不要创建无关目录或副本
+- 不要扩展到无关重构
+
+2. 不要重写现有系统
+- 不是新架构重做
+- 不是新项目
+- 不是双轨系统
+- 是在现有可用版本上做收敛式升级
+
+3. 设计边界必须遵守
+- `paper.pdf` 仍然是单篇生成的唯一真相来源
+- 每篇论文仍然必须是独立 paper scope
+- 每篇论文仍然必须是独立 tmux session
+- 不允许共享跨论文脏上下文
+- 只允许“结构化前序依赖卡”进入后续论文上下文
+
+4. 新增的语义产物必须双写
+以下文件需要同时写到：
+- `work/research-intel/daily/<date>/...`
+- `research-intel-records/daily/<date>/...`
+
+双写范围当前只限于：
+- `reading_route.json`
+- `reading_route.md`
+- `dependency_graph.json`
+- `dependency_cards/*.json`
+- `session_contexts/*.json`
+
+不要顺手把大二进制也做双写，除非明确需要。
+
+5. route planning 必须前置
+- 不允许继续把 `reading_order.md` 仅作为事后展示
+- 必须先定 route，再按 route 生成每篇论文
+- `route_role` 先固定为四类：
+  - `prerequisite`
+  - `core`
+  - `contrast`
+  - `extension`
+
+6. 局部依赖图规则
+- backward-only DAG
+- 只允许依赖阅读顺序中更早的论文
+- 默认 `K <= 3`
+- 允许 0 条依赖边
+- 依赖图目的是帮助比较和衔接，不是替代当前论文独立阅读
+
+7. 不要覆盖当前已有未提交改动
+当前 worktree 里已存在未提交变更，尤其不要误覆盖：
+- `/home/cnfjlhj/projects/research-intel/scripts/research-intel/codex-supervisor.js`
+- `/home/cnfjlhj/projects/research-intel/scripts/research-intel/lib/codex-supervisor.js`
+- `/home/cnfjlhj/projects/research-intel/tests/test-research-intel-codex-supervisor.js`
+
+8. 不要偷扩范围
+本轮只实现：
+- layered context
+- local dependency graph
+- route planning 前置
+- prompt 注入
+- semantic artifact 双写
+- Web / manifest / package 暴露这些新语义产物
+
+本轮不做：
+- `/tmp` 清理
+- 旧 backup 清理
+- 大二进制双写
+- 新运行模式
+- 额外 fallback 分支
+</requirements>
+
+<execution_order>
+按计划文件的任务顺序执行，不要跳步：
+
+1. route / dependency 原语
+2. daily path / manifest 扩展
+3. route planning 前置
+4. layered context 注入 prompt
+5. dependency card 与 paper card 扩展
+6. records / Web / package 暴露
+7. 文档同步与验证
+
+默认采用 TDD：
+- 先写失败测试
+- 运行确认失败
+- 写最小实现
+- 运行相关测试
+- 再进入下一任务
+</execution_order>
+
+<verification>
+任何声称“完成 / 通过 / 可用”之前，必须给实际证据。
+
+至少要做这些验证：
+
+1. 本地相关测试通过
+至少覆盖：
+- `tests/test-research-intel-reading-route.js`
+- `tests/test-research-intel-daily.js`
+- `tests/test-research-intel-network.js`
+- `tests/test-research-intel-render.js`
+- `tests/test-research-intel-package.js`
+- `tests/test-research-intel-web.js`
+- `tests/test-research-intel-codex-html.js`
+
+2. 全量本地测试通过
+- `npm test`
+
+3. `baohe` 上隔离 smoke 验证
+必须使用临时路径，不污染真实数据，例如：
+- 临时 `--profile-dir`
+- 临时 `--base-dir`
+- 临时 `--records-dir`
+
+4. 必须实际检查关键产物是否存在
+至少检查：
+- `reading_route.json`
+- `reading_route.md`
+- `dependency_graph.json`
+- `dependency_cards/`
+- `session_contexts/`
+- `index.html`
+- `paper_card.json`
+- `html_validation.json`
+- `standalone_validation.json`
+
+5. 如果有任何失败
+- 不要说“完成”
+- 直接给出卡点、证据、受影响文件、下一步建议
+</verification>
+
+<startup_checklist>
+开始前先输出：
+
+- `hostname`
+- `pwd`
+- repo 根目录
+- `git status --short`
+- 当前分支
+- 当前 worktree 里哪些文件已经是未提交状态
+- 你将如何避免覆盖这些已有改动
+
+然后再进入执行。
+</startup_checklist>
+
+<success_criteria>
+本轮真正完成的标准是：
+
+- 新语义层已在代码中落地
+- 每篇论文仍保持独立 tmux session
+- 后续论文可读取结构化前序依赖卡
+- `reading route` 已变成前置运行输入
+- 新增语义产物在 `work/` 与 `records/` 都存在
+- 本地测试通过
+- `baohe` 隔离 smoke 验证通过
+- 关键产物实际存在并被检查
+</success_criteria>
+
+<output_style>
+执行过程中简洁汇报。
+不要把任务描述成“重写”或“新做一套”。
+要明确说明这是在现有可用版本上补“阅读链语义层”。
+</output_style>

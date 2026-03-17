@@ -4,6 +4,9 @@ const { spawnSync } = require('child_process');
 
 function buildTelegramLedgerBundleEntries() {
   return [
+    'reading_route.md',
+    'reading_route.json',
+    'dependency_graph.json',
     'method_tree.md',
     'method_tree.json'
   ];

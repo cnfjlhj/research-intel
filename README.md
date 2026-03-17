@@ -110,7 +110,7 @@ cp .env.example .env
 - Codex HTML 生成配置
   - `RESEARCH_INTEL_CODEX_HTML_MODEL`：默认 `gpt-5.4`
   - `RESEARCH_INTEL_CODEX_HTML_REASONING_EFFORT`：可选，默认 `medium`
-  - `RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS`：可选，默认 `600000`
+  - `RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS`：可选，默认 `1800000`（30 分钟，适合单篇 HTML 长跑）
 - Telegram 推送配置
   - `TELEGRAM_BOT_TOKEN`
   - `TELEGRAM_CHAT_ID`
@@ -220,6 +220,44 @@ research-intel/
 ```
 
 仓库里只应提交代码、示例画像和文档。你的真实 `work/`、`research-intel-records/`、`.env` 不应该进入版本库。
+
+## 本地、GitHub、宿主机的关系
+
+- 本地 Git 仓库
+  - 代码真相源，应该优先在这里开发、测试和提交。
+- GitHub 仓库
+  - 用来同步脚本、测试和文档，不承载你的运行态数据。
+- 宿主机部署目录
+  - 用来跑 Web、cron、tmux worker 和当天产物。
+  - 它可以不是 Git 仓库，更接近“运行副本”而不是“开发主仓库”。
+
+推荐顺序：
+
+1. 在本地仓库完成改动并跑测试。
+2. 推到 GitHub，保持代码源清晰。
+3. 再把代码同步到宿主机，但保留宿主机自己的 `.env`、`work/`、`research-intel-records/`。
+
+## 宿主机升级
+
+对已有宿主机做代码升级时，建议只同步代码，不覆盖运行态：
+
+```bash
+rsync -az --exclude '.git/' \
+  --exclude 'node_modules/' \
+  --exclude 'work/' \
+  --exclude 'research-intel-records/' \
+  --exclude '.env' \
+  /path/to/local/research-intel/ host:/path/to/deploy/research-intel/
+```
+
+同步后至少做两步核验：
+
+```bash
+bash -lc "cd /path/to/deploy/research-intel && node --test tests/codex-enhancement-config.test.js tests/test-research-intel-codex-html.js"
+bash -lc "cd /path/to/deploy/research-intel && bash scripts/research-intel/status-web.sh"
+```
+
+如果宿主机上的 `codex`、`npm` 或 `node` 依赖 `nvm`/登录 shell 初始化，优先用 `bash -lc` 执行远端命令，避免 PATH 假阴性。
 
 ## 宿主机 Cron
 

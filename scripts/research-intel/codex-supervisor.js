@@ -8,15 +8,14 @@ const dotenv = require('dotenv');
 dotenv.config({ path: path.join(__dirname, '../../.env'), quiet: true });
 
 const { loadProfile } = require('./lib/profile');
+const { buildWorkerCommand } = require('./lib/codex-supervisor');
 const {
   ACTIVE_RUN_STATUSES,
   buildRuntimePaths,
-  buildProjectTrustConfigOverride,
   buildStartupInteractionPlan,
   buildWorkerPrompt,
   buildWorkerSessionName
 } = require('./lib/worker');
-const { buildCodexRuntimePath, resolveCodexLaunchSpec } = require('./lib/codex-cli');
 
 const ROOT_DIR = path.join(__dirname, '../..');
 const DEFAULT_PROFILE_DIR = path.join(ROOT_DIR, 'work/research-intel/profile');
@@ -149,41 +148,17 @@ function killSession(sessionName) {
   }
 }
 
-function buildWorkerCommand({ projectDir, sessionName, promptPath }) {
-  const proxyLines = [];
-  for (const key of ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'no_proxy', 'NO_PROXY']) {
-    if (process.env[key]) {
-      proxyLines.push(`export ${key}='${String(process.env[key]).replace(/'/g, `'\\''`)}'`);
-    }
-  }
-  const trustOverride = buildProjectTrustConfigOverride(projectDir);
-  const launchSpec = resolveCodexLaunchSpec({
-    env: process.env,
-    nodeBinary: process.execPath
-  });
-  const runtimePath = buildCodexRuntimePath(process.env.PATH, launchSpec.codexBinary);
-  const launchPrefix = [
-    launchSpec.command,
-    ...launchSpec.argsPrefix
-  ].map(value => `'${String(value).replace(/'/g, `'\\''`)}'`).join(' ');
-
-  return [
-    `cd '${projectDir}'`,
-    `export TMUX_SESSION='${sessionName}'`,
-    `export PATH='${path.join(projectDir, 'bin')}':'${runtimePath.replace(/'/g, `'\\''`)}'`,
-    ...proxyLines,
-    `PROMPT_FILE='${promptPath}'`,
-    'PROMPT="$(cat "$PROMPT_FILE")"',
-    `exec ${launchPrefix} --no-alt-screen --dangerously-bypass-approvals-and-sandbox --search -c '${trustOverride.replace(/'/g, `'\\''`)}' -C '${projectDir}' "$PROMPT"`
-  ].join('\n');
-}
-
-function startCodexSession({ projectDir, sessionName, promptPath }) {
+function startCodexSession({ projectDir, sessionName, promptPath, runtimeEnvPath }) {
   if (sessionExists(sessionName)) {
     return false;
   }
 
-  const command = buildWorkerCommand({ projectDir, sessionName, promptPath });
+  const command = buildWorkerCommand({
+    projectDir,
+    sessionName,
+    promptPath,
+    runtimeEnvPath
+  });
   const result = spawnSync('tmux', ['new-session', '-d', '-s', sessionName, 'bash', '-lc', command], {
     encoding: 'utf8'
   });
@@ -279,6 +254,7 @@ async function main() {
   const dateString = options.dateString || dateStringInTimezone(profile.timezone || 'Asia/Shanghai');
   const runtimePaths = buildRuntimePaths(options.baseDir);
   const sessionName = buildWorkerSessionName(options.sessionBase, dateString);
+  const runtimeEnvPath = path.join(options.profileDir, 'runtime.env');
 
   ensureDir(runtimePaths.promptsDir);
   ensureDir(runtimePaths.logsDir);
@@ -351,7 +327,8 @@ async function main() {
   const created = startCodexSession({
     projectDir: ROOT_DIR,
     sessionName,
-    promptPath
+    promptPath,
+    runtimeEnvPath
   });
   await sleep(created ? 2000 : 1000);
   await clearStartupBlockers(sessionName);

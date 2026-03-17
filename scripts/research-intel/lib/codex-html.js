@@ -21,6 +21,15 @@ const BUNDLED_KATEX_ASSET_DIR = path.join(__dirname, '..', 'assets', 'katex');
 const DETACHED_COMMAND_RUNNER_PATH = path.join(__dirname, 'detached-command-runner.js');
 const TMUX_SESSION_NAME_LIMIT = 64;
 const TMUX_POLL_INTERVAL_MS = 1000;
+const WORKING_DIR_HTML_RECOVERY_IDLE_MS = 30000;
+const CODEX_HTML_NO_OUTPUT_STALL_MS = 900000;
+const CODEX_HTML_WRITE_PHASE_NO_OUTPUT_STALL_MS = 900000;
+const CODEX_HTML_WRITE_PHASE_PATTERNS = [
+  /开始写\s*[`'"“”]?index\.html/i,
+  /\bwriting\s*[`'"“”]?index\.html\b/i,
+  /\bapply_patch\b[\s\S]{0,200}\bindex\.html\b/i,
+  /cat <<['"]?[A-Z0-9_]+['"]? > .*index\.html/i
+];
 const TMUX_ENV_EXACT_KEYS = new Set([
   'PATH',
   'HOME',
@@ -577,7 +586,9 @@ function buildCodexInlineHtmlPrompt({
   openreviewSummary,
   pageImagesDir,
   pageTextsDir,
-  pageImageCount
+  pageImageCount,
+  routeContextJson = '',
+  dependencyCardsJson = ''
 }) {
   const templateReference = buildTemplateDesignReference(templateHtml);
 
@@ -597,6 +608,12 @@ function buildCodexInlineHtmlPrompt({
     '- Rebuttal 过程（如果有）：整理 OpenReview 上的重要争议点、作者回应与审稿意见变化。',
     '- One More Thing：任何你认为真正重要、值得额外讲给我听的内容。',
     '',
+    '这次生成的优先级顺序是：',
+    '1. 公开细节覆盖率',
+    '2. 证据解释质量',
+    '3. 页面审美与阅读节奏',
+    '4. 模板视觉语言一致性',
+    '',
     '这次的工程化附加约束如下：',
     ...buildPaperWorkspaceSourceLines({
       paperPdfPath,
@@ -607,6 +624,22 @@ function buildCodexInlineHtmlPrompt({
       pageImagesDir,
       pageTextsDir
     }),
+    '机器可读补充上下文（只帮助你理解阅读路线和当前读者关心点，不改变单篇主叙事）如下：',
+    '```json',
+    routeContextJson || '{}',
+    '```',
+    '前序依赖卡摘要（仅作为承接、比较、冲突检查线索）如下：',
+    '```json',
+    dependencyCardsJson || '[]',
+    '```',
+    '- 当前 paper.pdf 仍然高于所有前序依赖卡。',
+    '- 不要让这些前序依赖卡改变页面的主叙事重心。',
+    '- 前序依赖卡只提供比较、承接和冲突检查线索，不能覆盖当前论文自己的证据。',
+    '- 如果前序依赖卡与当前 paper.pdf 冲突，必须以当前 paper.pdf 为准。',
+    '这是一次非交互的一次性生成。',
+    '你已经被授权直接完成最终交付，不要再请求确认、许可、回复“确认”或额外指示。',
+    '不要说“如果你要我继续请回复确认”之类的话。',
+    '不要尝试落盘修改本地文件；只需要把完整的 index.html 源码作为最终回复输出，运行器会自动把你的最终回复保存成文件。',
     '最终回复必须只包含完整的 index.html 源码，不能有 markdown code fence，不能有前言后记。',
     '不要调用任何额外模型，不要把输出退化成解释性文本。',
     '',
@@ -622,8 +655,13 @@ function buildCodexInlineHtmlPrompt({
     '- attached images 是论文 PDF 的关键页面图像证据，你必须认真查看，用它们判断 figure/table/算法框/实验页的内容。',
     '- 不得只依赖提取文本；文本只作为辅助。',
     '- 如果 paper.pdf 尚未直接覆盖到某个细节，可以用页面图像、分页文本或全文抽取辅助定位，但最终表述必须回到 paper.pdf。',
+    '- 公开细节覆盖率是硬指标：读者读完页面后，应尽量把握这篇论文几乎全部公开细节，尤其是能影响复现、比较和判断结论可信度的细节。',
+    '- 如果论文公开了 prompt、system prompt、instruction template、超参数、数据切分、评估设置、模型版本、训练/推理流程或 appendix 中的关键实现细节，必须尽量系统整理到页面里。',
+    '- 如果论文没有公开某项细节，要明确写“论文未公开”或“不确定”，不要用常识或经验把空白补满。',
     '- 如果你不确定某个数字、表格项或 figure 细节，要明确标注“不确定”，不要编造。',
     '- 如果论文没有 OpenReview / rebuttal 信息，不要伪造该部分。',
+    '- paper_meta.json 里如果存在 recommendation_context，把它当成“为什么今天值得读这篇”的辅助线索，不要把它写成论文事实。',
+    '- 如果机器可读上下文里出现 user_profile，只能帮助你决定解释重点和组织方式，不能改变论文本身的事实排序与主线判断。',
     '- 必须使用 KaTeX 支持数学渲染。',
     '- 行内公式统一使用 \\( ... \\)。',
     '- 块级公式统一使用 $$ ... $$。',
@@ -690,6 +728,9 @@ function buildHtmlRepairPrompt({
   return [
     '你现在是在修补一份已经生成过的 index.html。',
     '这不是从零生成；你必须基于当前 HTML 修改，使其通过本地浏览器验收。',
+    '这是一次非交互的一次性修补。',
+    '你已经被授权直接输出最终 HTML，不要再请求确认、许可或额外指示。',
+    '不要说“如果你确认我再继续”之类的话。',
     '最终回复必须只包含完整的 index.html 源码，不能有 markdown code fence，不能有解释。',
     '',
     '修补原则：',
@@ -785,6 +826,9 @@ function buildHtmlEnhancementPrompt({
   return [
     '你现在要基于当前 HTML 深化和修补一份论文页面，而不是从零另起炉灶。',
     '目标是：保留当前初稿里已经成立的视觉质感和页面节奏，但把内容深度、证据密度、图表呈现和 reviewer 视角补足。',
+    '这是一次非交互的一次性增强。',
+    '你已经被授权直接输出最终 HTML，不要再请求确认、许可或额外指示。',
+    '不要说“如果你确认我再继续”之类的话。',
     '最终回复必须只包含完整的 index.html 源码，不能有 markdown code fence，不能有解释。',
     '',
     '硬要求：',
@@ -1398,6 +1442,9 @@ function findPlaceholderMarkers(html) {
     if (!match) {
       continue;
     }
+    if (match[1] === '占位' && /占位优势/.test(chunk)) {
+      continue;
+    }
     const wordCount = chunk.split(/\s+/).filter(Boolean).length;
     if (shortChunkPattern.test(chunk) || (chunk.length <= 40 && wordCount <= 6)) {
       markers.add(match[1]);
@@ -1557,6 +1604,7 @@ function collectPlaywrightBrowserCandidates({
   }
   if (homeDir) {
     roots.push(path.join(homeDir, '.cache', 'ms-playwright'));
+    roots.push(path.join(homeDir, '.cache', 'research-intel-browser', 'chrome'));
   }
 
   const candidates = [];
@@ -1572,7 +1620,7 @@ function collectPlaywrightBrowserCandidates({
   for (const rootPath of roots) {
     for (const entry of safeReadDirEntries(rootPath, readdirSync)) {
       const name = typeof entry === 'string' ? entry : entry?.name;
-      if (!name || !/^(?:chromium|chrome|headless_shell)-/i.test(name)) {
+      if (!name || !/^(?:chromium|chrome|headless_shell|linux|mac|win(?:32|64)?)-/i.test(name)) {
         continue;
       }
       for (const suffix of binarySuffixes) {
@@ -2123,6 +2171,7 @@ function buildCodexHtmlFailureMessage({
   baseMessage,
   sessionName,
   runtimePaths,
+  status = null,
   paneText = ''
 }) {
   const details = [
@@ -2132,36 +2181,234 @@ function buildCodexHtmlFailureMessage({
     `stdout=${runtimePaths.stdoutPath}`,
     `stderr=${runtimePaths.stderrPath}`
   ];
+  if (status && typeof status === 'object') {
+    const snapshot = {
+      status: status.status || 'unknown',
+      pid: status.pid || null,
+      startedAt: status.startedAt || '',
+      updatedAt: status.updatedAt || '',
+      lastOutputAt: status.lastOutputAt || '',
+      stdoutBytes: status.stdoutBytes || 0,
+      stderrBytes: status.stderrBytes || 0
+    };
+    details.push(`status_snapshot=${truncateText(JSON.stringify(snapshot), 300)}`);
+  }
   if (paneText && paneText.trim()) {
     details.push(`pane=${truncateText(paneText, 500)}`);
   }
   return details.join(' | ');
 }
 
+function isDetachedRunnerTerminalStatus(status) {
+  return status?.status === 'completed' || status?.status === 'failed';
+}
+
+function safeStatSync(filePath) {
+  if (!filePath) {
+    return null;
+  }
+  try {
+    return fs.statSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function parseTimestampMs(value) {
+  const parsed = Date.parse(String(value || '').trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function readUtf8Tail(filePath, maxBytes = 32768) {
+  const stat = safeStatSync(filePath);
+  if (!stat || stat.size <= 0) {
+    return '';
+  }
+
+  const start = Math.max(0, stat.size - maxBytes);
+  const length = stat.size - start;
+  if (length <= 0) {
+    return '';
+  }
+
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    fs.readSync(fd, buffer, 0, length, start);
+    return buffer.toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function hasCodexEnteredHtmlWritePhase(stderrPath) {
+  const tailText = readUtf8Tail(stderrPath);
+  if (!tailText) {
+    return false;
+  }
+  return CODEX_HTML_WRITE_PHASE_PATTERNS.some(pattern => pattern.test(tailText));
+}
+
+function isHtmlDocument(text) {
+  const normalized = String(text || '');
+  return (/^<!doctype html/i.test(normalized) || /^<html/i.test(normalized))
+    && /<\/html>/i.test(normalized);
+}
+
+function readRecoverableCodexHtmlFromWorkingDir({
+  workingDir,
+  previousWorkingDirHtmlStat
+}) {
+  const workingDirHtmlPath = path.join(workingDir, 'index.html');
+  const currentStat = safeStatSync(workingDirHtmlPath);
+  if (!currentStat) {
+    return null;
+  }
+
+  if (previousWorkingDirHtmlStat
+    && previousWorkingDirHtmlStat.mtimeMs === currentStat.mtimeMs
+    && previousWorkingDirHtmlStat.size === currentStat.size) {
+    return null;
+  }
+
+  const rawWorkingDirHtml = fs.readFileSync(workingDirHtmlPath, 'utf8');
+  const recoveredHtml = cleanHtmlResponse(rawWorkingDirHtml);
+  if (!isHtmlDocument(recoveredHtml)) {
+    return null;
+  }
+
+  return {
+    recoveredHtml,
+    workingDirHtmlPath,
+    stat: currentStat
+  };
+}
+
+function recoverCodexHtmlFromWorkingDir({
+  workingDir,
+  targetHtmlPath,
+  finalMessagePath,
+  previousWorkingDirHtmlStat
+}) {
+  const recoverableHtml = readRecoverableCodexHtmlFromWorkingDir({
+    workingDir,
+    previousWorkingDirHtmlStat
+  });
+  if (!recoverableHtml) {
+    return null;
+  }
+
+  ensureDir(path.dirname(finalMessagePath));
+  ensureDir(path.dirname(targetHtmlPath));
+  fs.writeFileSync(finalMessagePath, `${recoverableHtml.recoveredHtml}\n`, 'utf8');
+  fs.writeFileSync(targetHtmlPath, `${recoverableHtml.recoveredHtml}\n`, 'utf8');
+
+  return {
+    recoveredHtml: recoverableHtml.recoveredHtml,
+    workingDirHtmlPath: recoverableHtml.workingDirHtmlPath
+  };
+}
+
 async function waitForCodexHtmlTmuxCompletion({
   sessionName,
   runtimePaths,
-  timeoutMs
+  timeoutMs,
+  workingDir,
+  previousWorkingDirHtmlStat,
+  workingDirRecoveryIdleMs = WORKING_DIR_HTML_RECOVERY_IDLE_MS,
+  noOutputStallMs = CODEX_HTML_NO_OUTPUT_STALL_MS,
+  writePhaseNoOutputStallMs = CODEX_HTML_WRITE_PHASE_NO_OUTPUT_STALL_MS
 }) {
   const startedAt = Date.now();
+  let latestStatus = null;
+  let htmlWritePhaseDetected = false;
+  let lastWritePhaseScanStderrBytes = -1;
 
   while (Date.now() - startedAt <= timeoutMs) {
     const status = readJsonIfExists(runtimePaths.statusPath);
     if (status) {
-      return status;
+      latestStatus = status;
+      const stderrBytes = Number(status.stderrBytes) || 0;
+      if (!htmlWritePhaseDetected && stderrBytes > 0 && stderrBytes !== lastWritePhaseScanStderrBytes) {
+        htmlWritePhaseDetected = hasCodexEnteredHtmlWritePhase(runtimePaths.stderrPath);
+        lastWritePhaseScanStderrBytes = stderrBytes;
+      }
+      if (isDetachedRunnerTerminalStatus(status)) {
+        return status;
+      }
+    }
+
+    const recoverableHtml = readRecoverableCodexHtmlFromWorkingDir({
+      workingDir,
+      previousWorkingDirHtmlStat
+    });
+    if (recoverableHtml) {
+      const newestRecoverableActivityMs = Math.max(
+        recoverableHtml.stat.mtimeMs || 0,
+        parseTimestampMs(latestStatus?.lastOutputAt)
+      );
+      if (Date.now() - newestRecoverableActivityMs >= workingDirRecoveryIdleMs) {
+        const paneText = captureTmuxPane(sessionName);
+        if (paneText) {
+          fs.writeFileSync(runtimePaths.paneCapturePath, paneText, 'utf8');
+        }
+        if (tmuxSessionExists(sessionName)) {
+          killTmuxSession(sessionName);
+        }
+        return {
+          ...(latestStatus || {}),
+          status: 'recovered_from_working_dir',
+          exitCode: 0,
+          signal: '',
+          finalizedFrom: 'working_dir_html_idle',
+          endedAt: new Date().toISOString()
+        };
+      }
+    }
+
+    if (latestStatus) {
+      const lastObservableOutputMs = Math.max(
+        parseTimestampMs(latestStatus.lastOutputAt),
+        parseTimestampMs(latestStatus.startedAt),
+        startedAt
+      );
+      const effectiveNoOutputStallMs = htmlWritePhaseDetected
+        ? Math.max(noOutputStallMs, writePhaseNoOutputStallMs)
+        : noOutputStallMs;
+      if (Date.now() - lastObservableOutputMs >= effectiveNoOutputStallMs) {
+        const paneText = captureTmuxPane(sessionName);
+        if (paneText) {
+          fs.writeFileSync(runtimePaths.paneCapturePath, paneText, 'utf8');
+        }
+        if (tmuxSessionExists(sessionName)) {
+          killTmuxSession(sessionName);
+        }
+        throw new Error(buildCodexHtmlFailureMessage({
+          baseMessage: htmlWritePhaseDetected
+            ? `codex tmux run stalled without new output for ${effectiveNoOutputStallMs}ms after entering html write phase`
+            : `codex tmux run stalled without new output for ${effectiveNoOutputStallMs}ms`,
+          sessionName,
+          runtimePaths,
+          status: latestStatus,
+          paneText
+        }));
+      }
     }
 
     if (!tmuxSessionExists(sessionName)) {
       await sleep(200);
       const lateStatus = readJsonIfExists(runtimePaths.statusPath);
-      if (lateStatus) {
+      if (isDetachedRunnerTerminalStatus(lateStatus)) {
         return lateStatus;
       }
 
       throw new Error(buildCodexHtmlFailureMessage({
-        baseMessage: 'codex tmux session exited before writing status',
+        baseMessage: latestStatus
+          ? 'codex tmux session exited before writing a terminal status'
+          : 'codex tmux session exited before writing status',
         sessionName,
-        runtimePaths
+        runtimePaths,
+        status: lateStatus || latestStatus
       }));
     }
 
@@ -2180,6 +2427,7 @@ async function waitForCodexHtmlTmuxCompletion({
     baseMessage: `codex tmux run timed out after ${timeoutMs}ms`,
     sessionName,
     runtimePaths,
+    status: latestStatus,
     paneText
   }));
 }
@@ -2192,13 +2440,17 @@ async function runCodexHtmlGeneration({
   attachedPageImages,
   model = DEFAULT_CODEX_HTML_MODEL,
   reasoningEffort = DEFAULT_CODEX_HTML_REASONING_EFFORT,
-  timeoutMs = DEFAULT_CODEX_HTML_TIMEOUT_MS
+  timeoutMs = DEFAULT_CODEX_HTML_TIMEOUT_MS,
+  workingDirRecoveryIdleMs = WORKING_DIR_HTML_RECOVERY_IDLE_MS,
+  noOutputStallMs = CODEX_HTML_NO_OUTPUT_STALL_MS,
+  writePhaseNoOutputStallMs = CODEX_HTML_WRITE_PHASE_NO_OUTPUT_STALL_MS
 }) {
   const sessionName = buildCodexHtmlTmuxSessionName({
     workingDir,
     targetHtmlPath,
     finalMessagePath
   });
+  const previousWorkingDirHtmlStat = safeStatSync(path.join(workingDir, 'index.html'));
   const runtimePaths = buildCodexHtmlTmuxRunPaths({
     workingDir,
     targetHtmlPath,
@@ -2257,13 +2509,50 @@ async function runCodexHtmlGeneration({
     configPath: runtimePaths.configPath,
     environmentEntries: buildCodexHtmlTmuxEnvEntries(tmuxEnv)
   });
-  const status = await waitForCodexHtmlTmuxCompletion({
-    sessionName,
-    runtimePaths,
-    timeoutMs
-  });
+  let status = null;
+  let waitError = null;
+  try {
+    status = await waitForCodexHtmlTmuxCompletion({
+      sessionName,
+      runtimePaths,
+      timeoutMs,
+      workingDir,
+      previousWorkingDirHtmlStat,
+      workingDirRecoveryIdleMs,
+      noOutputStallMs,
+      writePhaseNoOutputStallMs
+    });
+  } catch (error) {
+    waitError = error;
+  }
   const stdout = fs.existsSync(runtimePaths.stdoutPath) ? fs.readFileSync(runtimePaths.stdoutPath, 'utf8') : '';
   const stderr = fs.existsSync(runtimePaths.stderrPath) ? fs.readFileSync(runtimePaths.stderrPath, 'utf8') : '';
+
+  const recoveredHtml = recoverCodexHtmlFromWorkingDir({
+    workingDir,
+    targetHtmlPath,
+    finalMessagePath,
+    previousWorkingDirHtmlStat
+  });
+  if (recoveredHtml) {
+    return {
+      stdout,
+      stderr,
+      finalMessage: recoveredHtml.recoveredHtml,
+      sessionName,
+      status: status || readJsonIfExists(runtimePaths.statusPath) || {
+        status: 'recovered_from_working_dir',
+        exitCode: 0,
+        signal: ''
+      },
+      recoveredFromWorkingDir: true,
+      recoveredWorkingDirHtmlPath: recoveredHtml.workingDirHtmlPath
+    };
+  }
+
+  if (waitError) {
+    throw waitError;
+  }
 
   if (status.exitCode !== 0) {
     throw new Error(buildCodexHtmlFailureMessage({
@@ -2292,7 +2581,9 @@ async function runCodexHtmlGeneration({
     stderr,
     finalMessage: rawFinalMessage,
     sessionName,
-    status
+    status,
+    recoveredFromWorkingDir: false,
+    recoveredWorkingDirHtmlPath: ''
   };
 }
 

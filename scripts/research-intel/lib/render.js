@@ -411,6 +411,37 @@ function buildReadingOrderMarkdown(selectedPapers, dateString, dailyCuration = n
   return lines.join('\n');
 }
 
+function buildReadingRouteMarkdown(route) {
+  const lines = [
+    `# ${route?.date || 'Unknown Date'} Reading Route`,
+    '',
+    `- Route logic: ${route?.routeLogic || '暂无 route logic。'}`,
+    ''
+  ];
+
+  if (!(route?.orderedPapers || []).length) {
+    lines.push('- 暂无论文进入本次 reading route。');
+    return lines.join('\n');
+  }
+
+  lines.push('## Ordered Papers');
+  lines.push('');
+  for (const paper of route.orderedPapers) {
+    lines.push(`### ${paper.rank}. ${paper.title}`);
+    lines.push(`- route_role: ${paper.routeRole || 'unknown'}`);
+    lines.push(`- why_here: ${paper.whyHere || '暂无'}`);
+    if ((paper.compareAxes || []).length > 0) {
+      lines.push(`- compare_axes: ${(paper.compareAxes || []).join('；')}`);
+    }
+    if ((paper.dependencyPaperIds || []).length > 0) {
+      lines.push(`- dependency_paper_ids: ${(paper.dependencyPaperIds || []).join('；')}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
 function buildTelegramMessage({ dateString, selectedPapers, watchlistPapers = [], artifactPackage }) {
   const lines = [`Research Intelligence ${dateString}`, ''];
 
@@ -511,6 +542,7 @@ module.exports = {
   buildBriefMarkdown,
   buildCoverageMarkdown,
   buildMethodTreeDeltaMarkdown,
+  buildReadingRouteMarkdown,
   buildReadingOrderMarkdown,
   buildTelegramMessage,
   findRelatedSeeds,

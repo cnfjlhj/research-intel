@@ -149,6 +149,32 @@ test('buildPaperCard keeps internal recommendation scaffolding out of core_probl
   assert.match(card.core_problem[0], /verifier-guided archive search/i);
 });
 
+test('buildPaperCard carries route role and dependency metadata', () => {
+  const card = buildPaperCard({
+    paper: {
+      title: 'Paper B',
+      arxivId: '2603.20000',
+      routeRole: 'core',
+      rank: 2,
+      dependencyPaperIds: ['arxiv:2603.10000'],
+      compareAxes: ['core mechanism', 'evaluation setup'],
+      whyRelevantToCurrent: '承接 prerequisite 的问题设定，再进入主方法细节。'
+    },
+    meta: {
+      title: 'Paper B',
+      abstract: 'Paper B studies a core mechanism with a concrete evaluation setup.'
+    },
+    openreviewSummary: '暂无公开 OpenReview 信息。',
+    dateString: '2026-03-17'
+  });
+
+  assert.equal(card.route_role, 'core');
+  assert.equal(card.route_rank, 2);
+  assert.deepEqual(card.dependency_paper_ids, ['arxiv:2603.10000']);
+  assert.deepEqual(card.compare_axes, ['core mechanism', 'evaluation setup']);
+  assert.match(card.why_relevant_to_current, /承接 prerequisite/i);
+});
+
 test('buildNetworkDelta reports added node and edge counts between snapshots', () => {
   const previous = {
     version: 2,

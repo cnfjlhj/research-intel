@@ -2,6 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const {
   buildPaperSlug,
@@ -11,9 +14,15 @@ const {
 } = require('../scripts/research-intel/lib/daily');
 const {
   DEFAULT_HTML_GENERATION_MAX_ATTEMPTS,
+  buildHtmlInputCostSignals,
   buildPaperHtmlAttemptPaths,
+  buildDependencyCardPayload,
+  buildSessionContextPayload,
   parseArgs,
   minimumArtifactCount,
+  planDailyGenerationRoute,
+  resolveHtmlEvidenceImageLimit,
+  resolveProcessEnv,
   resolveRuntimeModelConfig,
   shouldLoadProjectEnv,
   selectForToday,
@@ -32,6 +41,11 @@ test('buildRunPaths creates the expected date-scoped output layout', () => {
 
   assert.equal(paths.runDir, '/tmp/research-intel/daily/2026-03-13');
   assert.equal(paths.papersDir, '/tmp/research-intel/daily/2026-03-13/papers');
+  assert.equal(paths.readingRouteJsonPath, '/tmp/research-intel/daily/2026-03-13/reading_route.json');
+  assert.equal(paths.readingRouteMarkdownPath, '/tmp/research-intel/daily/2026-03-13/reading_route.md');
+  assert.equal(paths.dependencyGraphPath, '/tmp/research-intel/daily/2026-03-13/dependency_graph.json');
+  assert.equal(paths.dependencyCardsDir, '/tmp/research-intel/daily/2026-03-13/dependency_cards');
+  assert.equal(paths.sessionContextsDir, '/tmp/research-intel/daily/2026-03-13/session_contexts');
   assert.equal(
     paths.packagePath,
     '/tmp/research-intel/daily/2026-03-13/research-intelligence-2026-03-13.tar.gz'
@@ -43,6 +57,11 @@ test('buildRecordPaths creates tracked record layout separate from heavy run out
 
   assert.equal(paths.runDir, '/tmp/research-intel-records/daily/2026-03-13');
   assert.equal(paths.knowledgeDir, '/tmp/research-intel-records/knowledge');
+  assert.equal(paths.readingRouteJsonPath, '/tmp/research-intel-records/daily/2026-03-13/reading_route.json');
+  assert.equal(paths.readingRouteMarkdownPath, '/tmp/research-intel-records/daily/2026-03-13/reading_route.md');
+  assert.equal(paths.dependencyGraphPath, '/tmp/research-intel-records/daily/2026-03-13/dependency_graph.json');
+  assert.equal(paths.dependencyCardsDir, '/tmp/research-intel-records/daily/2026-03-13/dependency_cards');
+  assert.equal(paths.sessionContextsDir, '/tmp/research-intel-records/daily/2026-03-13/session_contexts');
   assert.equal(paths.methodTreeJsonPath, '/tmp/research-intel-records/knowledge/method_tree.json');
   assert.equal(paths.methodTreeMarkdownPath, '/tmp/research-intel-records/knowledge/method_tree.md');
 });
@@ -76,10 +95,41 @@ test('parseArgs binds runtime.env to the selected profile directory unless expli
   assert.equal(explicit.runtimeEnvExplicit, true);
 });
 
+test('parseArgs enables fast smoke mode explicitly', () => {
+  const parsed = parseArgs(['--fast-smoke']);
+
+  assert.equal(parsed.fastSmoke, true);
+});
+
 test('shouldLoadProjectEnv keeps the repo .env for the default profile only', () => {
   assert.equal(shouldLoadProjectEnv(parseArgs([])), true);
   assert.equal(shouldLoadProjectEnv(parseArgs(['--profile-dir', '/tmp/custom-profile'])), false);
   assert.equal(shouldLoadProjectEnv(parseArgs(['--runtime-env', '/tmp/custom/runtime.env'])), false);
+});
+
+test('resolveHtmlEvidenceImageLimit trims html evidence pages in fast smoke mode', () => {
+  assert.equal(resolveHtmlEvidenceImageLimit({ fastSmoke: false }), 6);
+  assert.equal(resolveHtmlEvidenceImageLimit({ fastSmoke: true }), 4);
+});
+
+test('buildHtmlInputCostSignals records prompt bytes, image bytes, and heuristic token estimates', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-html-cost-'));
+  const imageA = path.join(tempDir, 'a.jpg');
+  const imageB = path.join(tempDir, 'b.jpg');
+  fs.writeFileSync(imageA, '12345', 'utf8');
+  fs.writeFileSync(imageB, '1234567890', 'utf8');
+
+  const metrics = buildHtmlInputCostSignals({
+    promptText: '这是 prompt body',
+    attachedPageImages: [imageA, imageB]
+  });
+
+  assert.equal(metrics.promptBytes > 0, true);
+  assert.equal(metrics.promptChars, '这是 prompt body'.length);
+  assert.equal(metrics.attachedPageImageCount, 2);
+  assert.equal(metrics.attachedPageImageBytes, 15);
+  assert.equal(metrics.promptTokenEstimate > 0, true);
+  assert.equal(metrics.providerUsageAvailable, false);
 });
 
 test('decorateSelectedPapers adds recommendation reasons, anchor links, and reading order text', () => {
@@ -288,7 +338,41 @@ test('resolveRuntimeModelConfig does not silently reuse HTML models for curation
 test('resolveRuntimeModelConfig inherits the baohe-safe Codex HTML timeout default', () => {
   const config = resolveRuntimeModelConfig({});
 
-  assert.equal(config.codexHtmlTimeoutMs, 600000);
+  assert.equal(config.codexHtmlTimeoutMs, 1800000);
+});
+
+test('resolveProcessEnv keeps explicit shell overrides above runtime.env while still letting runtime.env override project .env', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-env-'));
+  const projectEnvPath = path.join(tempDir, 'project.env');
+  const runtimeEnvPath = path.join(tempDir, 'runtime.env');
+
+  fs.writeFileSync(projectEnvPath, [
+    'RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS=600000',
+    'RESEARCH_INTEL_CODEX_HTML_REASONING_EFFORT=medium',
+    'RESEARCH_INTEL_RATE_LIMIT_PER_MINUTE=5',
+    'PROJECT_ONLY=project'
+  ].join('\n'), 'utf8');
+  fs.writeFileSync(runtimeEnvPath, [
+    'RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS=900000',
+    'RESEARCH_INTEL_CODEX_HTML_REASONING_EFFORT=high',
+    'RUNTIME_ONLY=runtime'
+  ].join('\n'), 'utf8');
+
+  const resolvedEnv = resolveProcessEnv({
+    runtimeEnvPath
+  }, {
+    RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS: '1800000',
+    RESEARCH_INTEL_RATE_LIMIT_PER_MINUTE: '9',
+    SHELL_ONLY: 'shell'
+  }, projectEnvPath);
+  const config = resolveRuntimeModelConfig(resolvedEnv);
+
+  assert.equal(config.codexHtmlTimeoutMs, 1800000);
+  assert.equal(config.codexHtmlReasoningEffort, 'high');
+  assert.equal(resolvedEnv.RESEARCH_INTEL_RATE_LIMIT_PER_MINUTE, '9');
+  assert.equal(resolvedEnv.RUNTIME_ONLY, 'runtime');
+  assert.equal(resolvedEnv.PROJECT_ONLY, 'project');
+  assert.equal(resolvedEnv.SHELL_ONLY, 'shell');
 });
 
 test('splitDailyPicks keeps must-read strict and fills a separate watchlist from nearby candidates', () => {
@@ -349,4 +433,136 @@ test('splitDailyPicks keeps must-read strict and fills a separate watchlist from
     picks.watchlist.map(item => item.title),
     ['Watch Candidate A', 'Watch Candidate B']
   );
+});
+
+test('planDailyGenerationRoute uses route order before paper generation', () => {
+  const planned = planDailyGenerationRoute({
+    dateString: '2026-03-17',
+    selectedPapers: [
+      {
+        title: 'Memory Follow-up',
+        branchId: 'memory',
+        score: 91,
+        reasonWhyToday: 'follow-up'
+      },
+      {
+        title: 'Shared Framing',
+        branchId: 'memory',
+        score: 95,
+        reasonWhyToday: 'framing'
+      },
+      {
+        title: 'Verifier Contrast',
+        branchId: 'verifier',
+        score: 88,
+        reasonWhyToday: 'contrast'
+      }
+    ]
+  });
+
+  assert.deepEqual(
+    planned.generationQueue.map(paper => paper.title),
+    ['Shared Framing', 'Memory Follow-up', 'Verifier Contrast']
+  );
+  assert.deepEqual(
+    planned.generationQueue.map(paper => paper.routeRole),
+    ['prerequisite', 'core', 'contrast']
+  );
+  assert.equal(planned.route.orderedPapers.length, 3);
+  assert.equal(planned.dependencyGraph.edges.every(edge => edge.fromRank < edge.toRank), true);
+});
+
+test('buildSessionContextPayload records route and dependency inputs for one paper session', () => {
+  const sessionContext = buildSessionContextPayload({
+    dateString: '2026-03-17',
+    paper: {
+      paperId: 'paper:b',
+      title: 'Memory Follow-up',
+      slug: 'memory-follow-up',
+      rank: 2,
+      routeRole: 'core',
+      dependencyPaperIds: ['paper:a']
+    },
+    route: {
+      routeLogic: '先基础，再主方法。'
+    },
+    runPaths: {
+      readingRouteJsonPath: '/tmp/run/reading_route.json',
+      dependencyGraphPath: '/tmp/run/dependency_graph.json'
+    },
+    sessionContextPath: '/tmp/run/session_contexts/02-memory-follow-up.json',
+    currentSourcePaths: {
+      paperPdfPath: '/tmp/run/papers/02-memory-follow-up/paper.pdf',
+      paperMetaPath: '/tmp/run/papers/02-memory-follow-up/paper_meta.json'
+    },
+    dependencyCards: [
+      {
+        paperId: 'paper:a',
+        title: 'Paper A',
+        cardPath: '/tmp/run/dependency_cards/01-paper-a.json',
+        compareAxes: ['feedback loop']
+      }
+    ]
+  });
+
+  assert.equal(sessionContext.date, '2026-03-17');
+  assert.equal(sessionContext.paper.paperId, 'paper:b');
+  assert.equal(sessionContext.paper.routeRole, 'core');
+  assert.equal(sessionContext.paper.sessionContextPath, '/tmp/run/session_contexts/02-memory-follow-up.json');
+  assert.equal(sessionContext.globalContext.readingRoutePath, '/tmp/run/reading_route.json');
+  assert.equal(sessionContext.globalContext.dependencyGraphPath, '/tmp/run/dependency_graph.json');
+  assert.deepEqual(sessionContext.dependencyCards.map(card => card.cardPath), [
+    '/tmp/run/dependency_cards/01-paper-a.json'
+  ]);
+  assert.equal(sessionContext.currentSources.paperPdfPath, '/tmp/run/papers/02-memory-follow-up/paper.pdf');
+});
+
+test('buildDependencyCardPayload produces a public route-aware dependency card', () => {
+  const payload = buildDependencyCardPayload({
+    dateString: '2026-03-17',
+    paper: {
+      paperId: 'paper:b',
+      title: 'Memory Follow-up',
+      slug: 'memory-follow-up',
+      rank: 2,
+      routeRole: 'core',
+      dependencyPaperIds: ['paper:a'],
+      compareAxes: ['feedback loop', 'evaluation setup'],
+      whyHere: '主线第二篇，开始讲核心机制。'
+    },
+    paperCard: {
+      paper_id: 'paper:b',
+      title: 'Memory Follow-up',
+      summary_anchor: 'Paper B extends the shared framing with a concrete method.'
+    },
+    dependencyEdges: [
+      {
+        fromRank: 1,
+        fromPaperId: 'paper:a',
+        toRank: 2,
+        toPaperId: 'paper:b',
+        compareAxes: ['feedback loop']
+      }
+    ],
+    dependencyCards: [
+      {
+        paperId: 'paper:a',
+        title: 'Shared Framing',
+        routeRole: 'prerequisite',
+        cardPath: '/tmp/run/dependency_cards/01-shared-framing.json',
+        compareAxes: ['feedback loop']
+      }
+    ],
+    dependencyCardPath: '/tmp/run/dependency_cards/02-memory-follow-up.json',
+    sessionContextPath: '/tmp/run/session_contexts/02-memory-follow-up.json'
+  });
+
+  assert.equal(payload.paper_id, 'paper:b');
+  assert.equal(payload.route_role, 'core');
+  assert.equal(payload.route_rank, 2);
+  assert.deepEqual(payload.dependency_paper_ids, ['paper:a']);
+  assert.deepEqual(payload.compare_axes, ['feedback loop', 'evaluation setup']);
+  assert.equal(payload.session_context_path, '/tmp/run/session_contexts/02-memory-follow-up.json');
+  assert.equal(payload.dependencies[0].paper_id, 'paper:a');
+  assert.equal(payload.dependencies[0].card_path, '/tmp/run/dependency_cards/01-shared-framing.json');
 });

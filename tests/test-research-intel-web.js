@@ -102,6 +102,33 @@ function createFixture() {
 
   writeText(path.join(dailyDir, 'brief.md'), '# 今日简报\n\n- Demo Paper\n');
   writeText(path.join(dailyDir, 'reading_order.md'), '# 阅读顺序\n\n1. Demo Paper\n');
+  writeText(path.join(dailyDir, 'reading_route.md'), [
+    '# 2026-03-14 Reading Route',
+    '',
+    '- Route logic: 先看 prerequisite，再看 core。',
+    '',
+    '## Ordered Papers',
+    '',
+    '### 1. Demo Paper',
+    '- route_role: prerequisite',
+    '- compare_axes: demo-method；feedback loop'
+  ].join('\n'));
+  writeJson(path.join(dailyDir, 'reading_route.json'), {
+    date: '2026-03-14',
+    routeLogic: '先看 prerequisite，再看 core。',
+    orderedPapers: [
+      {
+        rank: 1,
+        title: 'Demo Paper',
+        routeRole: 'prerequisite',
+        compareAxes: ['demo-method', 'feedback loop']
+      }
+    ]
+  });
+  writeJson(path.join(dailyDir, 'dependency_graph.json'), {
+    maxInDegree: 3,
+    edges: []
+  });
   writeJson(path.join(dailyDir, 'daily_curation.json'), {
     overview: '先看主问题，再看具体实现。',
     route_logic: '第一篇先定主线。'
@@ -112,9 +139,14 @@ function createFixture() {
       reasonWhyToday: '因为它很新。',
       readingReason: '先看这篇。',
       readingStage: '先看',
+      routeRole: 'prerequisite',
+      routeRank: 1,
+      dependencyPaperIds: ['paper:shared-framing'],
       motivationSummary: '它直接回答一个核心问题。',
       methodTakeaway: '先用这篇钉住方法切口。',
       htmlPath: 'work/research-intel/daily/2026-03-14/papers/01-demo-paper/index.html',
+      dependencyCardPath: 'research-intel-records/daily/2026-03-14/dependency_cards/01-demo-paper.json',
+      sessionContextPath: 'research-intel-records/daily/2026-03-14/session_contexts/01-demo-paper.json',
       paperCard: {
         core_problem: ['它直接回答一个核心问题。'],
         method_tags: ['demo-method'],
@@ -149,6 +181,13 @@ function createFixture() {
     ],
     methodTree: {
       markdownPath: 'research-intel-records/knowledge/method_tree.md'
+    },
+    readingRoute: {
+      markdownPath: 'research-intel-records/daily/2026-03-14/reading_route.md',
+      jsonPath: 'research-intel-records/daily/2026-03-14/reading_route.json'
+    },
+    dependencyGraph: {
+      jsonPath: 'research-intel-records/daily/2026-03-14/dependency_graph.json'
     }
   });
   writeJson(path.join(dailyDir, 'delivery_status.json'), {
@@ -349,6 +388,36 @@ test('daily detail renders markdown tables and keeps ordered reading items group
     assert.ok((html.match(/<ol>/g) || []).length >= 1);
     assert.match(html, /<li>Demo Paper<p>阶段：先看<\/p><p>排序理由：先把主问题钉住。<\/p><\/li>/);
     assert.match(html, /<li>Demo Follow-up<p>阶段：第二篇再看<\/p><p>排序理由：继续补关键机制。<\/p><\/li>/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('daily detail renders route artifacts and dependency metadata', async () => {
+  const server = await startServer();
+  try {
+    const login = await fetch(`${server.baseUrl}/research-intel/login`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({ password: 'secret-pass' }),
+      redirect: 'manual'
+    });
+    const cookie = extractCookie(login);
+
+    const response = await fetch(`${server.baseUrl}/research-intel/daily/2026-03-14`, {
+      headers: { cookie }
+    });
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(html, /Raw Reading Route/);
+    assert.match(html, /reading_route\.json/);
+    assert.match(html, /dependency_graph\.json/);
+    assert.match(html, /route role/i);
+    assert.match(html, /prerequisite/);
+    assert.match(html, /依赖 1/);
   } finally {
     await server.close();
   }

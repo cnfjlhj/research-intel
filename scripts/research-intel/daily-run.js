@@ -34,6 +34,12 @@ const {
   buildPaperCard,
 } = require('./lib/network');
 const {
+  buildDependencyGraph,
+  buildDependencyCardFilename,
+  buildSessionContextFilename,
+  planReadingRoute
+} = require('./lib/reading-route');
+const {
   buildMethodTreeDelta,
   rebuildMethodTree,
   resolveMethodTaxonomy,
@@ -47,6 +53,7 @@ const {
   buildCoverageMarkdown,
   buildMethodTreeDeltaMarkdown,
   buildReadingOrderMarkdown,
+  buildReadingRouteMarkdown,
   buildTelegramMessage
 } = require('./lib/render');
 const { sendTelegramDocument } = require('./lib/telegram');
@@ -63,6 +70,7 @@ const DEFAULT_RUNTIME_ENV_PATH = path.join(DEFAULT_PROFILE_DIR, 'runtime.env');
 const USER_AGENT = 'research-intel-bot/0.1 (+local)';
 const DEFAULT_HTML_TEXT_PREVIEW_LIMIT = 16000;
 const DEFAULT_HTML_EVIDENCE_IMAGE_LIMIT = 6;
+const FAST_SMOKE_HTML_EVIDENCE_IMAGE_LIMIT = 4;
 const DEFAULT_HTML_GENERATION_MAX_ATTEMPTS = 2;
 
 function parseArgs(argv) {
@@ -76,6 +84,7 @@ function parseArgs(argv) {
     runtimeEnvExplicit: false,
     maxResultsPerQuery: 12,
     paperLimit: null,
+    fastSmoke: false,
     noTelegram: false,
     disableNotification: false,
     noHistory: false,
@@ -113,6 +122,8 @@ function parseArgs(argv) {
     } else if (value === '--paper-limit') {
       options.paperLimit = Number(argv[index + 1]);
       index += 1;
+    } else if (value === '--fast-smoke') {
+      options.fastSmoke = true;
     } else if (value === '--no-telegram') {
       options.noTelegram = true;
     } else if (value === '--disable-notification') {
@@ -167,16 +178,22 @@ function ensureDir(targetDir) {
   fs.mkdirSync(targetDir, { recursive: true });
 }
 
-function loadProjectEnv(projectEnvPath = DEFAULT_PROJECT_ENV_PATH) {
-  if (projectEnvPath && fs.existsSync(projectEnvPath)) {
-    dotenv.config({ path: projectEnvPath, quiet: true });
+function readEnvFile(envPath) {
+  if (!envPath || !fs.existsSync(envPath)) {
+    return {};
   }
+  return dotenv.parse(fs.readFileSync(envPath, 'utf8'));
 }
 
-function loadRuntimeEnv(runtimeEnvPath) {
-  if (runtimeEnvPath && fs.existsSync(runtimeEnvPath)) {
-    dotenv.config({ path: runtimeEnvPath, quiet: true, override: true });
-  }
+function resolveProcessEnv(options = {}, baseEnv = process.env, projectEnvPath = DEFAULT_PROJECT_ENV_PATH) {
+  const inheritedEnv = { ...baseEnv };
+  const projectEnv = shouldLoadProjectEnv(options) ? readEnvFile(projectEnvPath) : {};
+  const runtimeEnv = readEnvFile(options.runtimeEnvPath);
+  return {
+    ...projectEnv,
+    ...runtimeEnv,
+    ...inheritedEnv
+  };
 }
 
 function writeJson(targetPath, data) {
@@ -185,6 +202,54 @@ function writeJson(targetPath, data) {
 
 function writeText(targetPath, text) {
   fs.writeFileSync(targetPath, text, 'utf8');
+}
+
+function resolveHtmlEvidenceImageLimit(options = {}) {
+  return options.fastSmoke
+    ? FAST_SMOKE_HTML_EVIDENCE_IMAGE_LIMIT
+    : DEFAULT_HTML_EVIDENCE_IMAGE_LIMIT;
+}
+
+function safeFileSize(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return 0;
+  }
+  return fs.statSync(filePath).size;
+}
+
+function estimatePromptTokens(promptText = '') {
+  const normalized = String(promptText || '');
+  const promptChars = normalized.length;
+  const promptBytes = Buffer.byteLength(normalized, 'utf8');
+  return Math.max(1, Math.ceil(Math.max(promptChars / 4, promptBytes / 6)));
+}
+
+function buildHtmlInputCostSignals({ promptText = '', attachedPageImages = [] }) {
+  const normalizedPrompt = String(promptText || '');
+  const promptChars = normalizedPrompt.length;
+  const promptBytes = Buffer.byteLength(normalizedPrompt, 'utf8');
+  const attachedPageImageBytes = attachedPageImages.reduce((total, imagePath) => total + safeFileSize(imagePath), 0);
+  return {
+    promptChars,
+    promptBytes,
+    promptTokenEstimate: estimatePromptTokens(normalizedPrompt),
+    attachedPageImageCount: attachedPageImages.length,
+    attachedPageImageBytes,
+    providerUsageAvailable: false,
+    providerUsageReason: 'codex-exec-local-artifacts-do-not-expose-provider-token-usage'
+  };
+}
+
+function buildHtmlOutputCostSignals({ status = null, finalMessagePath = '', htmlPath = '' }) {
+  return {
+    finalMessageBytes: safeFileSize(finalMessagePath),
+    htmlBytes: safeFileSize(htmlPath),
+    stdoutBytes: Number(status?.stdoutBytes || 0),
+    stderrBytes: Number(status?.stderrBytes || 0),
+    startedAt: status?.startedAt || '',
+    endedAt: status?.endedAt || '',
+    lastOutputAt: status?.lastOutputAt || ''
+  };
 }
 
 function appendJsonl(targetPath, records) {
@@ -213,6 +278,14 @@ function dateStringInTimezone(timezone, date = new Date()) {
   }
 
   return `${values.year}-${values.month}-${values.day}`;
+}
+
+function uniqueStrings(items) {
+  return [...new Set(
+    (items || [])
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+  )];
 }
 
 function readSentHistory(historyDir) {
@@ -597,6 +670,134 @@ function splitDailyPicks(scoredCandidates, profile, paperLimit = null) {
   };
 }
 
+function planDailyGenerationRoute({ dateString, selectedPapers, maxInDegree = 3 }) {
+  const baseRoute = planReadingRoute({
+    dateString,
+    selectedPapers
+  });
+  const dependencyGraph = buildDependencyGraph({
+    orderedPapers: baseRoute.orderedPapers,
+    maxInDegree
+  });
+  const generationQueue = baseRoute.orderedPapers.map(paper => ({
+    ...paper,
+    dependencyPaperIds: (dependencyGraph.dependenciesByPaperId[paper.paperId] || [])
+      .map(edge => edge.fromPaperId)
+  }));
+
+  return {
+    route: {
+      ...baseRoute,
+      orderedPapers: generationQueue
+    },
+    dependencyGraph,
+    generationQueue
+  };
+}
+
+function buildSessionContextPayload({
+  dateString,
+  paper,
+  route,
+  runPaths,
+  sessionContextPath,
+  currentSourcePaths,
+  dependencyCards
+}) {
+  return {
+    date: dateString,
+    paper: {
+      paperId: paper.paperId,
+      title: paper.title,
+      routeRank: paper.rank,
+      routeRole: paper.routeRole,
+      dependencyPaperIds: paper.dependencyPaperIds || [],
+      sessionContextPath
+    },
+    globalContext: {
+      routeLogic: route?.routeLogic || '',
+      readingRoutePath: runPaths?.readingRouteJsonPath || '',
+      dependencyGraphPath: runPaths?.dependencyGraphPath || ''
+    },
+    currentSources: {
+      paperPdfPath: currentSourcePaths?.paperPdfPath || '',
+      paperMetaPath: currentSourcePaths?.paperMetaPath || '',
+      paperTextPath: currentSourcePaths?.paperTextPath || '',
+      paperTextPreviewPath: currentSourcePaths?.paperTextPreviewPath || '',
+      openreviewSummaryPath: currentSourcePaths?.openreviewSummaryPath || '',
+      pageImagesDir: currentSourcePaths?.pageImagesDir || '',
+      pageTextsDir: currentSourcePaths?.pageTextsDir || ''
+    },
+    dependencyCards: (dependencyCards || []).map(card => ({
+      paperId: card.paperId,
+      title: card.title,
+      routeRole: card.routeRole || '',
+      cardPath: card.cardPath || '',
+      compareAxes: card.compareAxes || [],
+      whyRelevantToCurrent: card.whyRelevantToCurrent || ''
+    }))
+  };
+}
+
+function buildDependencyCardPayload({
+  dateString,
+  paper,
+  paperCard,
+  dependencyEdges,
+  dependencyCards,
+  dependencyCardPath,
+  sessionContextPath
+}) {
+  const edgeByPaperId = new Map(
+    (dependencyEdges || []).map(edge => [edge.fromPaperId, edge])
+  );
+  const normalizedDependencyCards = (dependencyCards || []).map(card => {
+    const edge = edgeByPaperId.get(card.paperId) || {};
+    return {
+      paper_id: card.paperId,
+      title: card.title || '',
+      route_role: card.routeRole || '',
+      route_rank: Number.isFinite(Number(card.routeRank)) ? Number(card.routeRank) : null,
+      card_path: card.cardPath || '',
+      compare_axes: uniqueStrings([
+        ...(card.compareAxes || []),
+        ...(edge.compareAxes || [])
+      ]),
+      why_relevant_to_current: card.whyRelevantToCurrent || ''
+    };
+  });
+
+  return {
+    ...(paperCard || {}),
+    paper_id: paper?.paperId || paperCard?.paper_id || '',
+    title: paper?.title || paperCard?.title || '',
+    date: dateString,
+    route_role: paper?.routeRole || paperCard?.route_role || '',
+    route_rank: Number.isFinite(Number(paper?.rank))
+      ? Number(paper.rank)
+      : (Number.isFinite(Number(paperCard?.route_rank)) ? Number(paperCard.route_rank) : null),
+    dependency_paper_ids: uniqueStrings(
+      (paper?.dependencyPaperIds || []).length > 0
+        ? paper.dependencyPaperIds
+        : (paperCard?.dependency_paper_ids || normalizedDependencyCards.map(card => card.paper_id))
+    ),
+    compare_axes: uniqueStrings([
+      ...(paper?.compareAxes || []),
+      ...(paperCard?.compare_axes || [])
+    ]),
+    why_relevant_to_current: String(
+      paper?.whyRelevantToCurrent
+      || paper?.whyHere
+      || paper?.readingReason
+      || paperCard?.why_relevant_to_current
+      || ''
+    ).trim(),
+    dependency_card_path: dependencyCardPath || '',
+    session_context_path: sessionContextPath || '',
+    dependencies: normalizedDependencyCards
+  };
+}
+
 function minimumArtifactCount({ profile, targetPaperCount, generationQueueLength }) {
   return Math.min(
     Math.max(1, Number(profile?.minPapers || 1)),
@@ -708,7 +909,8 @@ async function runPaperHtmlGenerationAttempt({
   attachedPageImages,
   evidencePages,
   options,
-  attemptPaths
+  attemptPaths,
+  inputCostSignals
 }) {
   const runtimePaths = buildCodexHtmlTmuxRunPaths({
     workingDir: paperDir,
@@ -774,6 +976,12 @@ async function runPaperHtmlGenerationAttempt({
       attemptDir: attemptPaths.attemptDir,
       sessionName: codexRun.sessionName,
       runtimePaths,
+      inputCostSignals,
+      outputCostSignals: buildHtmlOutputCostSignals({
+        status: codexRun.status,
+        finalMessagePath: attemptPaths.finalMessagePath,
+        htmlPath: attemptPaths.htmlPath
+      }),
       status: htmlValidation.ok && standaloneValidation.ok ? 'passed_validation' : 'failed_validation',
       generationModel: options.codexHtmlModel,
       generationSource: 'codex-tmux-pdf-first-single-chain',
@@ -828,7 +1036,7 @@ async function fetchCandidates(profile, maxResultsPerQuery) {
   };
 }
 
-async function generatePaperArtifacts(paper, index, runPaths, options, dateString) {
+async function generatePaperArtifacts(paper, index, runPaths, options, dateString, semanticContext = {}) {
   const paperDir = path.join(runPaths.papersDir, `${String(index + 1).padStart(2, '0')}-${paper.slug}`);
   ensureDir(paperDir);
 
@@ -888,7 +1096,7 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     pdfPath: paperPdfPath,
     pageImages,
     textOutputDir: pageTextsDir,
-    maxImages: DEFAULT_HTML_EVIDENCE_IMAGE_LIMIT
+    maxImages: resolveHtmlEvidenceImageLimit(options)
   });
   const attachedPageImages = evidencePages.map(entry => entry.imagePath);
   const evidenceManifest = buildEvidenceManifest(evidencePages);
@@ -918,6 +1126,30 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
   writeJson(webCoveragePath, webCoverage);
   writeText(webCoverageMarkdownPath, `${buildCoverageMarkdown({ paperTitle: meta.title, webCoverage })}\n`);
 
+  const sessionContextPayload = buildSessionContextPayload({
+    dateString,
+    paper,
+    route: semanticContext.route,
+    runPaths,
+    sessionContextPath: semanticContext.sessionContextPath,
+    currentSourcePaths: {
+      paperPdfPath,
+      paperMetaPath,
+      paperTextPath,
+      paperTextPreviewPath,
+      openreviewSummaryPath,
+      pageImagesDir,
+      pageTextsDir
+    },
+    dependencyCards: semanticContext.dependencyCards || []
+  });
+  if (semanticContext.sessionContextPath) {
+    writeJson(semanticContext.sessionContextPath, sessionContextPayload);
+  }
+  if (semanticContext.recordSessionContextPath) {
+    writeJson(semanticContext.recordSessionContextPath, sessionContextPayload);
+  }
+
   const templateHtml = options.htmlTemplate?.templateHtml || '';
   const promptText = buildCodexInlineHtmlPrompt({
     templateHtml,
@@ -931,9 +1163,27 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     openreviewSummary: fs.readFileSync(openreviewSummaryPath, 'utf8'),
     pageImagesDir,
     pageTextsDir,
-    pageImageCount: attachedPageImages.length
+    pageImageCount: attachedPageImages.length,
+    routeContextJson: JSON.stringify({
+      date: semanticContext.route?.date || dateString,
+      route_logic: semanticContext.route?.routeLogic || '',
+      ordered_paper_ids: (semanticContext.route?.orderedPapers || []).map(item => item.paperId),
+      current_paper_id: paper.paperId,
+      current_route_role: paper.routeRole
+    }, null, 2),
+    dependencyCardsJson: JSON.stringify((semanticContext.dependencyCards || []).map(card => ({
+      paper_id: card.paperId,
+      title: card.title,
+      route_role: card.routeRole || '',
+      compare_axes: card.compareAxes || [],
+      why_relevant_to_current: card.whyRelevantToCurrent || ''
+    })), null, 2)
   });
   writeText(promptPath, `${promptText}\n`);
+  const inputCostSignals = buildHtmlInputCostSignals({
+    promptText,
+    attachedPageImages
+  });
 
   const codexEnhancement = {
     ok: false,
@@ -949,12 +1199,14 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     status: 'running',
     stage: 'prepare',
     architecture: 'pdf-first-paper-scoped-tmux-codex-single-chain',
+    htmlGenerationMode: options.fastSmoke ? 'fast-smoke' : 'full',
     maxAttempts: DEFAULT_HTML_GENERATION_MAX_ATTEMPTS,
     selectedAttempt: null,
     promptPath,
     htmlPath,
     htmlValidationPath,
     standaloneValidationPath,
+    inputCostSignals,
     attempts: []
   };
   writePaperRunState(runStatePath, runState);
@@ -969,15 +1221,40 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
 
   for (let attemptNumber = 1; attemptNumber <= DEFAULT_HTML_GENERATION_MAX_ATTEMPTS; attemptNumber += 1) {
     const attemptPaths = buildPaperHtmlAttemptPaths(paperDir, attemptNumber);
+    const attemptRuntimePaths = buildCodexHtmlTmuxRunPaths({
+      workingDir: paperDir,
+      targetHtmlPath: attemptPaths.htmlPath,
+      finalMessagePath: attemptPaths.finalMessagePath
+    });
+    writePaperRunState(runStatePath, {
+      ...runState,
+      stage: 'generate',
+      currentAttempt: {
+        attempt: attemptNumber,
+        attemptDir: attemptPaths.attemptDir,
+        promptPath: attemptPaths.promptPath,
+        htmlPath: attemptPaths.htmlPath,
+        finalMessagePath: attemptPaths.finalMessagePath,
+        timeoutMs: options.codexHtmlTimeoutMs,
+        runtimeStatusPath: attemptRuntimePaths.statusPath,
+        runtimeStdoutPath: attemptRuntimePaths.stdoutPath,
+        runtimeStderrPath: attemptRuntimePaths.stderrPath,
+        inputCostSignals,
+        startedAt: new Date().toISOString()
+      }
+    });
     try {
+      const attemptStartedAtMs = Date.now();
       const attemptResult = await runPaperHtmlGenerationAttempt({
         paperDir,
         promptText,
         attachedPageImages,
         evidencePages,
         options,
-        attemptPaths
+        attemptPaths,
+        inputCostSignals
       });
+      const attemptDurationMs = Date.now() - attemptStartedAtMs;
       const attemptRecord = {
         attempt: attemptNumber,
         status: attemptResult.status,
@@ -991,8 +1268,13 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
         htmlValidationPath: attemptPaths.htmlValidationPath,
         standaloneValidationPath: attemptPaths.standaloneValidationPath,
         sessionName: attemptResult.sessionName,
+        durationMs: attemptDurationMs,
+        durationSeconds: Number((attemptDurationMs / 1000).toFixed(3)),
+        runtimeStatusPath: attemptResult.runtimePaths?.statusPath || '',
         runtimeStdoutPath: attemptResult.runtimePaths?.stdoutPath || '',
         runtimeStderrPath: attemptResult.runtimePaths?.stderrPath || '',
+        inputCostSignals: attemptResult.inputCostSignals || inputCostSignals,
+        outputCostSignals: attemptResult.outputCostSignals || {},
         validationFailureSummary: attemptResult.status === 'passed_validation'
           ? ''
           : buildAttemptFailureSummary(attemptResult)
@@ -1000,7 +1282,8 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
       runState.attempts.push(attemptRecord);
       writePaperRunState(runStatePath, {
         ...runState,
-        stage: attemptResult.status === 'passed_validation' ? 'publish' : 'generate_retry'
+        stage: attemptResult.status === 'passed_validation' ? 'publish' : 'generate_retry',
+        currentAttempt: null
       });
 
       if (attemptResult.status !== 'passed_validation') {
@@ -1036,11 +1319,16 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
       selectedAttempt = {
         ...attemptResult,
         attemptPaths,
+        durationMs: attemptDurationMs,
         htmlValidation,
         standaloneValidation
       };
       break;
     } catch (error) {
+      const currentAttemptStartedAt = runState.currentAttempt?.startedAt
+        ? new Date(runState.currentAttempt.startedAt).getTime()
+        : Date.now();
+      const attemptDurationMs = Math.max(0, Date.now() - currentAttemptStartedAt);
       lastFailureMessage = error.message;
       runState.attempts.push({
         attempt: attemptNumber,
@@ -1051,21 +1339,18 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
         finalMessagePath: attemptPaths.finalMessagePath,
         stdoutPath: attemptPaths.codexStdoutPath,
         stderrPath: attemptPaths.codexStderrPath,
-        runtimeStdoutPath: buildCodexHtmlTmuxRunPaths({
-          workingDir: paperDir,
-          targetHtmlPath: attemptPaths.htmlPath,
-          finalMessagePath: attemptPaths.finalMessagePath
-        }).stdoutPath,
-        runtimeStderrPath: buildCodexHtmlTmuxRunPaths({
-          workingDir: paperDir,
-          targetHtmlPath: attemptPaths.htmlPath,
-          finalMessagePath: attemptPaths.finalMessagePath
-        }).stderrPath,
+        runtimeStatusPath: attemptRuntimePaths.statusPath,
+        runtimeStdoutPath: attemptRuntimePaths.stdoutPath,
+        runtimeStderrPath: attemptRuntimePaths.stderrPath,
+        durationMs: attemptDurationMs,
+        durationSeconds: Number((attemptDurationMs / 1000).toFixed(3)),
+        inputCostSignals,
         error: error.message
       });
       writePaperRunState(runStatePath, {
         ...runState,
-        stage: attemptNumber < DEFAULT_HTML_GENERATION_MAX_ATTEMPTS ? 'generate_retry' : 'failed'
+        stage: attemptNumber < DEFAULT_HTML_GENERATION_MAX_ATTEMPTS ? 'generate_retry' : 'failed',
+        currentAttempt: null
       });
     }
   }
@@ -1075,6 +1360,7 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
       ...runState,
       status: 'failed',
       stage: 'failed',
+      currentAttempt: null,
       lastFailureMessage
     });
     throw new Error(
@@ -1086,9 +1372,11 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     ...runState,
     status: 'completed',
     stage: 'published',
+    currentAttempt: null,
     selectedAttempt: selectedAttempt.attemptNumber,
     generationSource: selectedAttempt.generationSource,
-    generationModel: selectedAttempt.generationModel
+    generationModel: selectedAttempt.generationModel,
+    outputCostSignals: selectedAttempt.outputCostSignals || {}
   });
 
   const paperCard = buildPaperCard({
@@ -1144,6 +1432,11 @@ function packageRunArtifacts(runPaths) {
     outputPath: runPaths.packagePath,
     cwd: runPaths.runDir,
     entries: [
+      'reading_route.json',
+      'reading_route.md',
+      'dependency_graph.json',
+      'dependency_cards',
+      'session_contexts',
       'daily_curation.json',
       'brief.md',
       'reading_order.md',
@@ -1175,12 +1468,10 @@ function packageTelegramArtifacts(runPaths, artifactPapers) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  if (shouldLoadProjectEnv(options)) {
-    loadProjectEnv();
-  }
-  loadRuntimeEnv(options.runtimeEnvPath);
-  Object.assign(options, resolveRuntimeModelConfig(process.env));
-  options.rateLimiter = new MinuteRateLimiter(Number(process.env.RESEARCH_INTEL_RATE_LIMIT_PER_MINUTE || '5'));
+  const resolvedEnv = resolveProcessEnv(options);
+  Object.assign(process.env, resolvedEnv);
+  Object.assign(options, resolveRuntimeModelConfig(resolvedEnv));
+  options.rateLimiter = new MinuteRateLimiter(Number(resolvedEnv.RESEARCH_INTEL_RATE_LIMIT_PER_MINUTE || '5'));
   options.htmlTemplate = resolveHtmlTemplateReference({
     rootDir: ROOT_DIR,
     profileDir: options.profileDir
@@ -1204,7 +1495,11 @@ async function main() {
   fs.rmSync(recordPaths.runDir, { recursive: true, force: true });
   ensureDir(runPaths.runDir);
   ensureDir(runPaths.papersDir);
+  ensureDir(runPaths.dependencyCardsDir);
+  ensureDir(runPaths.sessionContextsDir);
   ensureDir(recordPaths.runDir);
+  ensureDir(recordPaths.dependencyCardsDir);
+  ensureDir(recordPaths.sessionContextsDir);
   ensureDir(recordPaths.knowledgeDir);
   ensureDir(options.historyDir);
 
@@ -1225,33 +1520,88 @@ async function main() {
   const targetPaperCount = desiredPaperCount(profile, options.paperLimit);
   const generationTargetCount = Math.min(profile.maxPapers, targetPaperCount + 2);
   const dailyPicks = splitDailyPicks(scoredCandidates, profile, generationTargetCount);
-  const generationQueue = decorateSelectedPapers(
+  const initialGenerationQueue = decorateSelectedPapers(
     dailyPicks.mustRead,
     profile,
     now
   );
+  const plannedGeneration = planDailyGenerationRoute({
+    dateString,
+    selectedPapers: initialGenerationQueue
+  });
+  const generationQueue = plannedGeneration.generationQueue;
   const initialWatchlist = decorateWatchlistPapers(
     dailyPicks.watchlist,
     profile,
     now
   );
+  writeJson(runPaths.readingRouteJsonPath, plannedGeneration.route);
+  writeText(runPaths.readingRouteMarkdownPath, `${buildReadingRouteMarkdown(plannedGeneration.route)}\n`);
+  writeJson(runPaths.dependencyGraphPath, plannedGeneration.dependencyGraph);
+  writeJson(recordPaths.readingRouteJsonPath, plannedGeneration.route);
+  writeText(recordPaths.readingRouteMarkdownPath, `${buildReadingRouteMarkdown(plannedGeneration.route)}\n`);
+  writeJson(recordPaths.dependencyGraphPath, plannedGeneration.dependencyGraph);
 
   writeJson(path.join(runPaths.runDir, 'selected_papers.json'), generationQueue);
   writeJson(path.join(runPaths.runDir, 'watchlist_papers.json'), initialWatchlist);
 
   const artifactPapers = [];
   const artifactFailures = [];
+  const dependencyCardIndex = new Map();
   for (const paper of generationQueue) {
     const artifactIndex = artifactPapers.length;
     const paperDir = path.join(runPaths.papersDir, `${String(artifactIndex + 1).padStart(2, '0')}-${paper.slug}`);
+    const dependencyCardFilename = buildDependencyCardFilename(paper.rank || artifactIndex + 1, paper.slug);
+    const sessionContextFilename = buildSessionContextFilename(paper.rank || artifactIndex + 1, paper.slug);
     try {
-      artifactPapers.push(await generatePaperArtifacts(
+      const generatedPaper = await generatePaperArtifacts(
         paper,
         artifactIndex,
         runPaths,
         options,
-        dateString
-      ));
+        dateString,
+        {
+          route: plannedGeneration.route,
+          dependencyCards: (paper.dependencyPaperIds || [])
+            .map(paperId => dependencyCardIndex.get(paperId))
+            .filter(Boolean),
+          sessionContextPath: path.join(runPaths.sessionContextsDir, sessionContextFilename),
+          recordSessionContextPath: path.join(recordPaths.sessionContextsDir, sessionContextFilename)
+        }
+      );
+      const dependencyCardPath = path.join(runPaths.dependencyCardsDir, dependencyCardFilename);
+      const recordDependencyCardPath = path.join(recordPaths.dependencyCardsDir, dependencyCardFilename);
+      const dependencyEdges = plannedGeneration.dependencyGraph.dependenciesByPaperId[generatedPaper.paperId] || [];
+      const dependencyCards = (paper.dependencyPaperIds || [])
+        .map(paperId => dependencyCardIndex.get(paperId))
+        .filter(Boolean);
+      const dependencyCardPayload = buildDependencyCardPayload({
+        dateString,
+        paper: generatedPaper,
+        paperCard: generatedPaper.paperCard,
+        dependencyEdges,
+        dependencyCards,
+        dependencyCardPath,
+        sessionContextPath: path.join(runPaths.sessionContextsDir, sessionContextFilename)
+      });
+      writeJson(dependencyCardPath, dependencyCardPayload);
+      writeJson(recordDependencyCardPath, dependencyCardPayload);
+      generatedPaper.dependencyPaperIds = paper.dependencyPaperIds || [];
+      generatedPaper.dependencyCardPath = dependencyCardPath;
+      generatedPaper.recordDependencyCardPath = recordDependencyCardPath;
+      generatedPaper.dependencyCard = dependencyCardPayload;
+      generatedPaper.sessionContextPath = path.join(runPaths.sessionContextsDir, sessionContextFilename);
+      generatedPaper.recordSessionContextPath = path.join(recordPaths.sessionContextsDir, sessionContextFilename);
+      artifactPapers.push(generatedPaper);
+      dependencyCardIndex.set(generatedPaper.paperId, {
+        paperId: generatedPaper.paperId,
+        title: generatedPaper.title,
+        routeRole: generatedPaper.routeRole,
+        routeRank: generatedPaper.rank,
+        cardPath: generatedPaper.dependencyCardPath,
+        compareAxes: generatedPaper.compareAxes || [],
+        whyRelevantToCurrent: generatedPaper.readingReason || generatedPaper.whyHere || ''
+      });
     } catch (error) {
       let failureArtifactDir = '';
       if (fs.existsSync(paperDir)) {
@@ -1357,6 +1707,13 @@ async function main() {
     watchlistCount: finalWatchlist.length,
     watchlistTitles: finalWatchlist.map(paper => paper.title),
     curation: dailyCuration,
+    readingRoute: {
+      markdownPath: repoRelativePath(recordPaths.readingRouteMarkdownPath),
+      jsonPath: repoRelativePath(recordPaths.readingRouteJsonPath)
+    },
+    dependencyGraph: {
+      jsonPath: repoRelativePath(recordPaths.dependencyGraphPath)
+    },
     methodTree: {
       markdownPath: repoRelativePath(recordPaths.methodTreeMarkdownPath),
       jsonPath: repoRelativePath(recordPaths.methodTreeJsonPath)
@@ -1382,6 +1739,11 @@ async function main() {
       reasonWhyToday: paper.reasonWhyToday,
       readingStage: paper.readingStage,
       readingReason: paper.readingReason,
+      routeRole: paper.routeRole,
+      routeRank: paper.rank,
+      dependencyPaperIds: paper.dependencyPaperIds || [],
+      dependencyCardPath: repoRelativePath(paper.dependencyCardPath),
+      sessionContextPath: repoRelativePath(paper.sessionContextPath),
       paperCardPath: repoRelativePath(paper.paperCardPath),
       paperCard: paper.paperCard,
       webCoverage: paper.webCoverage
@@ -1420,8 +1782,13 @@ async function main() {
     reasonWhyToday: paper.reasonWhyToday,
     readingStage: paper.readingStage,
     readingReason: paper.readingReason,
+    routeRole: paper.routeRole,
+    routeRank: paper.rank,
+    dependencyPaperIds: paper.dependencyPaperIds || [],
     relatedSeeds: paper.relatedSeeds,
     htmlPath: repoRelativePath(paper.htmlPath),
+    dependencyCardPath: repoRelativePath(paper.dependencyCardPath),
+    sessionContextPath: repoRelativePath(paper.sessionContextPath),
     paperCardPath: repoRelativePath(paper.paperCardPath),
     paperCard: paper.paperCard,
     webCoverage: paper.webCoverage
@@ -1563,13 +1930,20 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_HTML_GENERATION_MAX_ATTEMPTS,
+  buildHtmlInputCostSignals,
   buildPaperHtmlAttemptPaths,
   parseArgs,
   desiredPaperCount,
   minimumArtifactCount,
+  resolveHtmlEvidenceImageLimit,
+  resolveProcessEnv,
   resolveRuntimeModelConfig,
   shouldLoadProjectEnv,
   scoreCandidates,
   selectForToday,
   splitDailyPicks
+  ,
+  planDailyGenerationRoute,
+  buildSessionContextPayload,
+  buildDependencyCardPayload
 };

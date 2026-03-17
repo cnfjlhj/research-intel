@@ -13,6 +13,9 @@ const {
 test('buildTelegramLedgerBundleEntries keeps only the iterative method tree artifacts', () => {
   const entries = buildTelegramLedgerBundleEntries();
   assert.deepEqual(entries, [
+    'reading_route.md',
+    'reading_route.json',
+    'dependency_graph.json',
     'method_tree.md',
     'method_tree.json'
   ]);
@@ -29,6 +32,14 @@ test('buildTelegramPaperBundleEntries keeps only the readable html surface', () 
   assert.ok(!entries.includes('openreview_summary.md'));
   assert.ok(!entries.includes('pages'));
   assert.ok(!entries.includes('page_texts'));
+});
+
+test('buildTelegramLedgerBundleEntries includes route and dependency artifacts', () => {
+  const entries = buildTelegramLedgerBundleEntries();
+  assert.ok(entries.includes('reading_route.md'));
+  assert.ok(entries.includes('reading_route.json'));
+  assert.ok(entries.includes('dependency_graph.json'));
+  assert.ok(!entries.includes('session_contexts'));
 });
 
 test('package.json exposes safe first-run scripts for public users', () => {
