@@ -38,7 +38,6 @@ resolve_node() {
 }
 
 NODE_BIN="$(resolve_node)"
-RUN_MODE="${RESEARCH_INTEL_RUN_MODE:-direct}"
 TIMEZONE="Asia/Shanghai"
 TODAY="$(date +%F)"
 while IFS='=' read -r key value; do
@@ -50,12 +49,8 @@ done < <("$NODE_BIN" "$SCRIPT_DIR/print-schedule-env.js" --project-dir "$PROJECT
 LOG_FILE="$LOG_DIR/cron-$TODAY.log"
 
 {
-  echo "[$(date --iso-8601=seconds)] research-intel cron start (mode=$RUN_MODE timezone=$TIMEZONE)"
+  echo "[$(date --iso-8601=seconds)] research-intel cron start (mode=codex-supervisor timezone=$TIMEZONE)"
   cd "$PROJECT_DIR"
-  if [[ "$RUN_MODE" == "codex" ]]; then
-    "$NODE_BIN" "$SCRIPT_DIR/codex-supervisor.js"
-  else
-    "$NODE_BIN" "$SCRIPT_DIR/daily-run.js"
-  fi
+  "$NODE_BIN" "$SCRIPT_DIR/codex-supervisor.js"
   echo "[$(date --iso-8601=seconds)] research-intel cron done"
 } >>"$LOG_FILE" 2>&1

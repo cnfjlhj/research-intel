@@ -2,10 +2,10 @@
   <rect width="1600" height="720" rx="40" fill="#0E1727"/>
   <rect x="64" y="64" width="1472" height="592" rx="28" fill="#111C30" stroke="#263246" stroke-width="2"/>
   <text x="96" y="134" fill="#F8FAFC" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="52" font-weight="700">
-    The public mainline now converges on one path
+    一条面向长期研究资产的以 PDF 为先主链路
   </text>
   <text x="96" y="182" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    PDF-first. paper-scoped. tmux-backed Codex. No dual-mode README story.
+    以 PDF 为先、单篇隔离、tmux 托管的 Codex，围绕单篇论文稳定交付。
   </text>
 
   <rect x="96" y="250" width="250" height="180" rx="26" fill="#FFF7ED" stroke="#F4C68A" stroke-width="2"/>
@@ -13,16 +13,16 @@
     paper.pdf
   </text>
   <text x="128" y="362" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    truth source
+    真相来源
   </text>
   <text x="128" y="396" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    Aux text and page images
+    文本抽取和页面图像
   </text>
   <text x="128" y="426" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    can help locate details,
+    可以帮助定位细节，
   </text>
   <text x="128" y="456" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    but they never outrank the PDF.
+    但永远不会高于 PDF。
   </text>
 
   <path d="M370 340H474" stroke="#38BDF8" stroke-width="8" stroke-linecap="round"/>
@@ -30,16 +30,16 @@
 
   <rect x="498" y="250" width="260" height="180" rx="26" fill="#0D2434" stroke="#38BDF8" stroke-width="2"/>
   <text x="530" y="314" fill="#E0F2FE" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="700">
-    Paper workspace
+    单篇工作区
   </text>
   <text x="530" y="362" fill="#BAE6FD" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    one directory per paper
+    每篇论文一个目录
   </text>
   <text x="530" y="394" fill="#BAE6FD" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    current paper only
+    只服务当前论文
   </text>
   <text x="530" y="426" fill="#BAE6FD" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    no cross-paper dirty context
+    不共享跨论文脏上下文
   </text>
 
   <path d="M782 340H886" stroke="#38BDF8" stroke-width="8" stroke-linecap="round"/>
@@ -47,16 +47,16 @@
 
   <rect x="910" y="250" width="250" height="180" rx="26" fill="#102A27" stroke="#22C55E" stroke-width="2"/>
   <text x="944" y="314" fill="#DCFCE7" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="700">
-    tmux session
+    tmux 会话
   </text>
   <text x="944" y="362" fill="#BBF7D0" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    one session per paper
+    每篇论文一个会话
   </text>
   <text x="944" y="394" fill="#BBF7D0" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    isolated Codex context
+    隔离的 Codex 上下文
   </text>
   <text x="944" y="426" fill="#BBF7D0" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    completion monitored outside
+    外部可监控完成状态
   </text>
 
   <path d="M1184 340H1288" stroke="#38BDF8" stroke-width="8" stroke-linecap="round"/>
@@ -67,20 +67,20 @@
     Codex
   </text>
   <text x="1346" y="362" fill="#FED7AA" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    writes HTML
+    生成 HTML
   </text>
   <text x="1346" y="394" fill="#FED7AA" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    with fresh attempts
+    支持重新尝试
   </text>
 
   <rect x="96" y="500" width="1410" height="108" rx="24" fill="#172337" stroke="#243041" stroke-width="2"/>
   <text x="132" y="548" fill="#F8FAFC" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24" font-weight="600">
-    Target landing zone when the chain succeeds:
+    主链路成功时的交付落点：
   </text>
   <text x="708" y="548" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    index.html  +  manifest.json  +  validation json/png  +  sidecar metadata
+    index.html  +  manifest.json  +  validation json/png  +  附属元数据
   </text>
   <text x="132" y="588" fill="#94A3B8" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    Public claims should stay below the current verification boundary on baohe until the smoke tests produce those files on demand.
+    最终可见的是一份经过浏览器校验、带可复用元数据的单篇论文页。
   </text>
 </svg>

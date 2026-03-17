@@ -310,28 +310,44 @@ function buildBriefMarkdown(selectedPapers, dateString, dailyCuration = null, wa
     lines.push('');
   }
 
-  lines.push('| 论文 | 研究动机 | 方法切口 | 为什么今天看 | 线索 |');
-  lines.push('| --- | --- | --- | --- | --- |');
+  if (selectedPapers.length === 0) {
+    lines.push('## 今日状态');
+    lines.push('- 今天没有论文通过主推筛选，主链保持空档。');
+    if (watchlistPapers.length > 0) {
+      lines.push(`- 仍保留 ${watchlistPapers.length} 篇观察池论文，适合回补或人工挑读。`);
+    } else {
+      lines.push('- 观察池里也没有足够接近当前主线的问题论文。');
+    }
+    lines.push('');
+  } else {
+    lines.push('| 论文 | 研究动机 | 方法切口 | 为什么今天看 | 线索 |');
+    lines.push('| --- | --- | --- | --- | --- |');
 
-  for (const paper of selectedPapers) {
-    lines.push(`| ${paper.title} | ${summarizeMotivation(paper)} | ${summarizeMethodTakeaway(paper)} | ${paper.reasonWhyToday} | ${summarizeEvidenceCounts(paper)} |`);
+    for (const paper of selectedPapers) {
+      lines.push(`| ${paper.title} | ${summarizeMotivation(paper)} | ${summarizeMethodTakeaway(paper)} | ${paper.reasonWhyToday} | ${summarizeEvidenceCounts(paper)} |`);
+    }
   }
 
   lines.push('');
   lines.push('## Quick Takes');
   lines.push('');
-  selectedPapers.forEach((paper, index) => {
-    lines.push(`### ${index + 1}. ${paper.title}`);
-    lines.push(`- 研究动机：${summarizeMotivation(paper)}`);
-    lines.push(`- 方法切口：${summarizeMethodTakeaway(paper)}`);
-    lines.push(`- 今日理由：${paper.reasonWhyToday}`);
-    lines.push(`- 关联锚点：${(paper.relatedSeeds || []).map(seed => seed.title).join('；') || '暂无'}`);
-    lines.push(`- 线索：${summarizeEvidenceCounts(paper)}`);
-    lines.push(`- 代码：${summarizeCodeRepos(paper.webCoverage?.codeRepos)}`);
-    lines.push(`- 中文博客：${summarizeChineseBlogs(paper.webCoverage?.chineseBlogs)}`);
-    lines.push(`- 外部报道：${summarizeCoverageLinks(paper.webCoverage?.coverage)}`);
+  if (selectedPapers.length === 0) {
+    lines.push('- 今日主推为空；如果你仍要读，可以先从观察池中挑最接近当前问题的一篇。');
     lines.push('');
-  });
+  } else {
+    selectedPapers.forEach((paper, index) => {
+      lines.push(`### ${index + 1}. ${paper.title}`);
+      lines.push(`- 研究动机：${summarizeMotivation(paper)}`);
+      lines.push(`- 方法切口：${summarizeMethodTakeaway(paper)}`);
+      lines.push(`- 今日理由：${paper.reasonWhyToday}`);
+      lines.push(`- 关联锚点：${(paper.relatedSeeds || []).map(seed => seed.title).join('；') || '暂无'}`);
+      lines.push(`- 线索：${summarizeEvidenceCounts(paper)}`);
+      lines.push(`- 代码：${summarizeCodeRepos(paper.webCoverage?.codeRepos)}`);
+      lines.push(`- 中文博客：${summarizeChineseBlogs(paper.webCoverage?.chineseBlogs)}`);
+      lines.push(`- 外部报道：${summarizeCoverageLinks(paper.webCoverage?.coverage)}`);
+      lines.push('');
+    });
+  }
 
   if ((watchlistPapers || []).length > 0) {
     lines.push('## 观察池 / Watchlist');
@@ -368,6 +384,13 @@ function buildReadingOrderMarkdown(selectedPapers, dateString, dailyCuration = n
     lines.push('');
   }
 
+  if (selectedPapers.length === 0) {
+    lines.push('- 今天没有论文进入主推列表。');
+    lines.push('- 如果需要保持阅读节奏，优先回看观察池或最近两天的方法主线。');
+    lines.push('');
+    return lines.join('\n');
+  }
+
   selectedPapers.forEach((paper, index) => {
     lines.push(`${index + 1}. ${paper.title}`);
     if (paper.readingStage) {
@@ -389,12 +412,20 @@ function buildReadingOrderMarkdown(selectedPapers, dateString, dailyCuration = n
 }
 
 function buildTelegramMessage({ dateString, selectedPapers, watchlistPapers = [], artifactPackage }) {
-  const lines = [
-    `Research Intelligence ${dateString}`,
-    '',
-    `今天推荐 ${selectedPapers.length} 篇，方向聚焦 self-evolving agents / automated discovery。`,
-    ''
-  ];
+  const lines = [`Research Intelligence ${dateString}`, ''];
+
+  if (selectedPapers.length === 0) {
+    lines.push('今天没有论文通过主推筛选。');
+    if (watchlistPapers.length > 0) {
+      lines.push(`已保留 ${watchlistPapers.length} 篇观察池论文，细节见附件 brief。`);
+    } else {
+      lines.push('观察池也为空，建议等待下一轮检索结果。');
+    }
+    lines.push('');
+  } else {
+    lines.push(`今天推荐 ${selectedPapers.length} 篇，方向聚焦 self-evolving agents / automated discovery。`);
+    lines.push('');
+  }
 
   selectedPapers.forEach((paper, index) => {
     lines.push(`${index + 1}. ${paper.title}`);

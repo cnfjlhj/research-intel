@@ -31,7 +31,12 @@ function normalizeSendTime(value) {
 }
 
 function parseVerifyDelayMinutes(value) {
-  const parsed = Number(String(value ?? '').trim());
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return DEFAULT_VERIFY_DELAY_MINUTES;
+  }
+
+  const parsed = Number(raw);
   if (!Number.isFinite(parsed)) {
     return DEFAULT_VERIFY_DELAY_MINUTES;
   }

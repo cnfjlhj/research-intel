@@ -42,16 +42,9 @@ function writeState(value) {
   fs.writeFileSync(STATE_PATH, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-function commandForRunMode(runMode) {
-  if (runMode === 'codex') {
-    return {
-      file: path.join(ROOT_DIR, 'scripts', 'research-intel', 'codex-supervisor.js'),
-      args: []
-    };
-  }
-
+function commandForDailyRun() {
   return {
-    file: path.join(ROOT_DIR, 'scripts', 'research-intel', 'daily-run.js'),
+    file: path.join(ROOT_DIR, 'scripts', 'research-intel', 'codex-supervisor.js'),
     args: []
   };
 }
@@ -72,9 +65,8 @@ async function main() {
   ensureDir(RUNTIME_DIR);
   const pollSeconds = Number(process.env.RESEARCH_INTEL_SCHEDULE_POLL_SECONDS || '60');
   const verifyDelayMinutes = Number(process.env.RESEARCH_INTEL_VERIFY_DELAY_MINUTES || '40');
-  const runMode = String(process.env.RESEARCH_INTEL_RUN_MODE || 'direct').toLowerCase();
 
-  console.log(`research-intel scheduler started (run mode: ${runMode})`);
+  console.log('research-intel scheduler started (mainline: codex-supervisor)');
 
   while (true) {
     const schedule = loadScheduleConfig({
@@ -92,7 +84,7 @@ async function main() {
 
     try {
       if (now.minuteString === sendTime && state.lastDailyDate !== now.dateString) {
-        const command = commandForRunMode(runMode);
+        const command = commandForDailyRun();
         console.log(`[scheduler] trigger daily for ${now.dateString} at ${now.minuteString}`);
         executeNodeScript(command.file, command.args);
         writeState({

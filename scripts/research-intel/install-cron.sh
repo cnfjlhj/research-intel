@@ -8,6 +8,8 @@ VERIFY_SCRIPT="$SCRIPT_DIR/verify-daily.sh"
 SCHEDULE_SCRIPT="$SCRIPT_DIR/print-schedule-env.js"
 BLOCK_START="# >>> research-intel >>>"
 BLOCK_END="# <<< research-intel <<<"
+LEGACY_DAILY_MARKER="research-intel-daily"
+LEGACY_VERIFY_MARKER="research-intel-daily-verify"
 
 resolve_node() {
   if [[ -n "${NODE_BIN:-}" ]] && [[ -x "${NODE_BIN}" ]]; then
@@ -68,9 +70,15 @@ done < <(
 CURRENT_CRONTAB="$(crontab -l 2>/dev/null || true)"
 
 {
-  printf '%s\n' "$CURRENT_CRONTAB" | awk -v start="$BLOCK_START" -v end="$BLOCK_END" '
+  printf '%s\n' "$CURRENT_CRONTAB" | awk \
+    -v start="$BLOCK_START" \
+    -v end="$BLOCK_END" \
+    -v legacyDaily="$LEGACY_DAILY_MARKER" \
+    -v legacyVerify="$LEGACY_VERIFY_MARKER" '
     $0 == start { skip = 1; next }
     $0 == end { skip = 0; next }
+    index($0, legacyDaily) { next }
+    index($0, legacyVerify) { next }
     !skip { print }
   '
   printf '%s\n' "$BLOCK_START"

@@ -68,7 +68,8 @@ function buildDeliveryPlan({
   dateString,
   historyDir,
   paperFiles = [],
-  ledgerPath = ''
+  ledgerPath = '',
+  ledgerTitle = 'Research Ledger'
 }) {
   const receipts = loadDeliveryReceipts(historyDir);
   const items = [
@@ -79,7 +80,7 @@ function buildDeliveryPlan({
     })),
     ...(ledgerPath ? [{
       kind: 'ledger',
-      title: 'Research Ledger',
+      title: ledgerTitle,
       filePath: ledgerPath
     }] : [])
   ].map(item => {

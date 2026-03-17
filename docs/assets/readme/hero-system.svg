@@ -5,88 +5,88 @@
   <circle cx="160" cy="760" r="280" fill="#7A3F12" opacity="0.38"/>
   <rect x="72" y="72" width="1456" height="776" rx="28" fill="#0F172A" stroke="#243041" stroke-width="2"/>
   <text x="112" y="156" fill="#F8FAFC" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="64" font-weight="700">
-    Research Intel
+    研究情报系统
   </text>
   <text x="112" y="214" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="28">
-    Turn each paper.pdf into a paper-scoped, validated HTML archive with a clean tmux-backed Codex run.
+    把每篇论文的 paper.pdf 变成一份可校验、可回看的论文档案页。
   </text>
   <text x="112" y="268" fill="#94A3B8" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    Single public path. auditable artifacts. file-backed memory. promotion only after verified evidence.
+    以 PDF 为先、产物可审计、研究记忆可累积，全部落在一条清晰主链路里。
   </text>
 
   <rect x="112" y="330" width="420" height="380" rx="26" fill="#111C30" stroke="#1E293B" stroke-width="2"/>
   <rect x="112" y="330" width="420" height="12" rx="6" fill="#E57A25"/>
   <text x="148" y="396" fill="#F8FAFC" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="700">
-    PDF truth
+    PDF 真相源
   </text>
   <text x="148" y="446" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    paper.pdf outranks helper text,
+    paper.pdf 的优先级高于辅助文本、
   </text>
   <text x="148" y="480" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    page images, and OpenReview
+    页面图像与 OpenReview
   </text>
   <text x="148" y="514" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    summaries in the public chain.
+    摘要，不会被反向覆盖。
   </text>
   <rect x="148" y="566" width="348" height="76" rx="18" fill="#172337"/>
   <text x="176" y="614" fill="#F8FAFC" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24" font-weight="600">
-    single source of truth
+    唯一真相来源
   </text>
   <rect x="148" y="654" width="348" height="76" rx="18" fill="#172337"/>
   <text x="176" y="702" fill="#F8FAFC" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24" font-weight="600">
-    aux data stays secondary
+    辅助材料始终从属
   </text>
 
   <rect x="590" y="330" width="420" height="380" rx="26" fill="#111C30" stroke="#1E293B" stroke-width="2"/>
   <rect x="590" y="330" width="420" height="12" rx="6" fill="#38BDF8"/>
   <text x="626" y="396" fill="#F8FAFC" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="700">
-    Paper-scoped run
+    单篇论文作用域
   </text>
   <text x="626" y="446" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    One workspace, one tmux session,
+    一篇论文一个工作区、
   </text>
   <text x="626" y="480" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    and one clean Codex context
+    一个 tmux session、
   </text>
   <text x="626" y="514" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    for each paper.
+    一份干净的 Codex 上下文。
   </text>
   <rect x="626" y="566" width="348" height="76" rx="18" fill="#172337"/>
   <text x="654" y="614" fill="#F8FAFC" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24" font-weight="600">
-    fresh generation attempts
+    支持重新生成尝试
   </text>
   <rect x="626" y="654" width="348" height="76" rx="18" fill="#172337"/>
   <text x="654" y="702" fill="#F8FAFC" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24" font-weight="600">
-    no cross-paper dirty state
+    不共享跨论文脏状态
   </text>
 
   <rect x="1068" y="330" width="420" height="380" rx="26" fill="#111C30" stroke="#1E293B" stroke-width="2"/>
   <rect x="1068" y="330" width="420" height="12" rx="6" fill="#22C55E"/>
   <text x="1104" y="396" fill="#F8FAFC" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="700">
-    Validated archive
+    已校验档案
   </text>
   <text x="1104" y="446" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    index.html, manifest, and browser
+    index.html、manifest 与浏览器
   </text>
   <text x="1104" y="480" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    validation artifacts become the
+    校验产物共同组成真正的
   </text>
   <text x="1104" y="514" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    real public deliverable.
+    对外交付物。
   </text>
   <rect x="1104" y="566" width="348" height="76" rx="18" fill="#172337"/>
   <text x="1132" y="614" fill="#F8FAFC" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24" font-weight="600">
-    paper_card + sidecar metadata
+    论文卡片与附属元数据
   </text>
   <rect x="1104" y="654" width="348" height="76" rx="18" fill="#172337"/>
   <text x="1132" y="702" fill="#F8FAFC" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24" font-weight="600">
-    research memory compounds later
+    研究记忆持续累积
   </text>
 
   <text x="112" y="788" fill="#E2E8F0" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24" font-weight="600">
-    Mainline direction: PDF-first, paper-scoped, tmux-backed Codex.
+    主链路方向：以 PDF 为先、单篇隔离、tmux 托管的 Codex。
   </text>
   <text x="112" y="826" fill="#94A3B8" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="20">
-    Selection, fan-out, and history stay secondary to verified per-paper delivery on baohe.
+    每日选择、历史记录与后续笔记，都从单篇论文的可校验交付继续生长。
   </text>
 </svg>

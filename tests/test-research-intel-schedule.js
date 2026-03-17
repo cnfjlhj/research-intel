@@ -66,6 +66,39 @@ test('loadScheduleConfig reads send_time and timezone from research_brief and de
   assert.equal(config.verifyTime, '08:05');
 });
 
+test('loadScheduleConfig falls back to the default verify delay when env is unset or blank', () => {
+  const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-schedule-'));
+  fs.writeFileSync(
+    path.join(profileDir, 'research_brief.md'),
+    [
+      '---',
+      'timezone: Asia/Shanghai',
+      'send_time: "06:00"',
+      '---',
+      '',
+      '# Research Brief',
+      '',
+      '## Current Goal',
+      '- demo'
+    ].join('\n'),
+    'utf8'
+  );
+
+  const unsetConfig = loadScheduleConfig({
+    profileDir,
+    env: {}
+  });
+  const blankConfig = loadScheduleConfig({
+    profileDir,
+    env: { RESEARCH_INTEL_VERIFY_DELAY_MINUTES: '   ' }
+  });
+
+  assert.equal(unsetConfig.verifyDelayMinutes, 40);
+  assert.equal(unsetConfig.verifyTime, '06:40');
+  assert.equal(blankConfig.verifyDelayMinutes, 40);
+  assert.equal(blankConfig.verifyTime, '06:40');
+});
+
 test('todayInTimezone returns a stable YYYY-MM-DD string', () => {
   const value = todayInTimezone('Asia/Shanghai', new Date('2026-03-15T00:30:00Z'));
   assert.match(value, /^\d{4}-\d{2}-\d{2}$/);

@@ -110,7 +110,7 @@ async function main() {
       }
 
       const caption = item.kind === 'ledger'
-        ? `Research Ledger ${dateString}`
+        ? `${item.title || 'Research Ledger'} ${dateString}`
         : `HTML: ${String(item.title || '').slice(0, 80)}`;
       const telegramResult = await sendTelegramDocument({
         filePath: item.absoluteFilePath,

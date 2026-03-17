@@ -84,6 +84,12 @@ async function main() {
   child.stderr.on('data', chunk => {
     stderrStream.write(chunk);
   });
+  child.stdin.on('error', error => {
+    if (error.code === 'EPIPE' || error.code === 'ERR_STREAM_DESTROYED') {
+      return;
+    }
+    stderrStream.write(`[detached-command-runner stdin] ${error.stack || error.message}\n`);
+  });
 
   child.on('error', async error => {
     stderrStream.write(`${error.stack || error.message}\n`);

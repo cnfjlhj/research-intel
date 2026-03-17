@@ -200,6 +200,8 @@ test('buildCodexHtmlPrompt encodes the hard requirements for direct Codex genera
   assert.match(prompt, /attached images .*论文 PDF .*关键页面证据/);
   assert.match(prompt, /不得只依赖提取文本/);
   assert.match(prompt, /如果你不确定某个数字、表格项或 figure 细节，要明确标注“不确定”/);
+  assert.match(prompt, /所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文/);
+  assert.match(prompt, /Research Product Page/);
   assert.match(prompt, /页面要有“作品感”/);
   assert.match(prompt, /研究动机/);
   assert.match(prompt, /实验方法与实验设计/);
@@ -251,6 +253,8 @@ test('buildCodexInlineHtmlPrompt forces raw html-only output', () => {
   assert.match(prompt, /行内公式统一使用 .*\\\( ... \\\)/);
   assert.match(prompt, /块级公式统一使用 \$\$ ... \$\$/);
   assert.match(prompt, /不得把页面图像里看不清的表格数字编造成具体数值/);
+  assert.match(prompt, /所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文/);
+  assert.match(prompt, /Paper Overview/);
   assert.doesNotMatch(prompt, /<html><\/html>/);
 });
 
@@ -295,6 +299,7 @@ test('buildHtmlRepairPrompt patches the current html against validation findings
   assert.match(prompt, /不要因为修一个 JS\/KaTeX 问题把整页内容重写/);
   assert.match(prompt, /Tailwind CDN/);
   assert.match(prompt, /不要机械复制那一大段 base64 图库/);
+  assert.match(prompt, /所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文/);
   assert.match(prompt, /data:embedded-asset-omitted-for-repair-prompt/);
   assert.match(prompt, /research-intel evidence gallery omitted from repair prompt preview/);
   assert.doesNotMatch(prompt, /data:image\/png;base64,AAAA/);
@@ -340,6 +345,7 @@ test('buildHtmlEnhancementPrompt preserves the existing draft structure while as
   assert.match(prompt, /研究动机/);
   assert.match(prompt, /评论/);
   assert.match(prompt, /placeholder|占位/);
+  assert.match(prompt, /所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文/);
 });
 
 test('buildEvidenceManifest annotates evidence pages with roles, tags, and compact text excerpts', () => {
@@ -746,6 +752,54 @@ test('normalizeLocalImageAssetRefs rewrites file urls and zero-padded page refs 
   assert.match(normalized, /src="pages\/page-2\.jpg"/);
   assert.doesNotMatch(normalized, /file:\/\//);
   assert.doesNotMatch(normalized, /page-02\.jpg/);
+});
+
+test('normalizeLocalImageAssetRefs resolves paper page assets from nested generation attempt directories', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-nested-local-images-'));
+  const paperDir = path.join(tempDir, 'paper');
+  const attemptDir = path.join(paperDir, 'generation_attempts', 'attempt-01');
+  const htmlPath = path.join(attemptDir, 'index.html');
+  const pagesDir = path.join(paperDir, 'pages');
+  fs.mkdirSync(attemptDir, { recursive: true });
+  fs.mkdirSync(pagesDir, { recursive: true });
+  fs.writeFileSync(path.join(pagesDir, 'page-5.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+
+  const input = [
+    '<!DOCTYPE html>',
+    '<html><body>',
+    '<img src="pages/page-05.jpg">',
+    '</body></html>'
+  ].join('\n');
+
+  const normalized = normalizeLocalImageAssetRefs(input, { htmlPath });
+  assert.match(normalized, /src="\.\.\/\.\.\/pages\/page-5\.jpg"/);
+  assert.doesNotMatch(normalized, /pages\/page-05\.jpg/);
+});
+
+test('normalizeLocalImageAssetRefs rewrites prior-attempt katex asset refs for nested validation runs', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-nested-katex-assets-'));
+  const paperDir = path.join(tempDir, 'paper');
+  const attemptOneDir = path.join(paperDir, 'generation_attempts', 'attempt-01');
+  const attemptTwoDir = path.join(paperDir, 'generation_attempts', 'attempt-02');
+  const htmlPath = path.join(attemptTwoDir, 'index.html');
+  const assetDir = path.join(attemptOneDir, 'assets', 'katex');
+  fs.mkdirSync(assetDir, { recursive: true });
+  fs.mkdirSync(attemptTwoDir, { recursive: true });
+  fs.writeFileSync(path.join(assetDir, 'katex.min.css'), 'body{}');
+  fs.writeFileSync(path.join(assetDir, 'katex.min.js'), 'window.renderMathInElement=()=>{};');
+
+  const input = [
+    '<!DOCTYPE html>',
+    '<html><head>',
+    '<link rel="stylesheet" href="generation_attempts/attempt-01/assets/katex/katex.min.css">',
+    '<script src="generation_attempts/attempt-01/assets/katex/katex.min.js"></script>',
+    '</head><body></body></html>'
+  ].join('\n');
+
+  const normalized = normalizeLocalImageAssetRefs(input, { htmlPath });
+  assert.match(normalized, /href="\.\.\/attempt-01\/assets\/katex\/katex\.min\.css"/);
+  assert.match(normalized, /src="\.\.\/attempt-01\/assets\/katex\/katex\.min\.js"/);
+  assert.doesNotMatch(normalized, /generation_attempts\/attempt-01\/assets\/katex/);
 });
 
 test('inlineLocalImageAssetRefs converts local page images into embedded data urls', () => {

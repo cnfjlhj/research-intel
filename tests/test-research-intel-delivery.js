@@ -67,6 +67,27 @@ test('buildDeliveryPlan reuses same-day receipts for identical files and marks o
   assert.equal(plan.items.find(item => item.kind === 'ledger').status, 'pending');
 });
 
+test('buildDeliveryPlan accepts a custom ledger title for zero-paper days', () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-delivery-brief-'));
+  const historyDir = path.join(rootDir, 'history');
+  const briefPath = path.join(rootDir, 'brief.md');
+  fs.mkdirSync(historyDir, { recursive: true });
+  fs.writeFileSync(briefPath, '# brief\n', 'utf8');
+
+  const plan = buildDeliveryPlan({
+    dateString: '2026-03-17',
+    historyDir,
+    paperFiles: [],
+    ledgerPath: briefPath,
+    ledgerTitle: 'Research Brief'
+  });
+
+  assert.equal(plan.expectedCount, 1);
+  assert.equal(plan.items[0].kind, 'ledger');
+  assert.equal(plan.items[0].title, 'Research Brief');
+  assert.equal(plan.items[0].status, 'pending');
+});
+
 test('summarizeDeliveryStatus counts sent and missing items from a persisted status payload', () => {
   const summary = summarizeDeliveryStatus({
     expectedCount: 4,

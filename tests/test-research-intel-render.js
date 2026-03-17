@@ -84,6 +84,39 @@ test('buildTelegramMessage summarizes enrichment counts for each selected paper'
   assert.match(text, /观察池 1 篇/);
 });
 
+test('buildBriefMarkdown and buildTelegramMessage stay usable when no paper passes the daily gate', () => {
+  const markdown = buildBriefMarkdown([], '2026-03-17', {
+    overview: '今天先保持主线收敛，不强推边缘论文。',
+    route_logic: '主推为空时，先看观察池。'
+  }, [
+    {
+      title: 'Watchlist Only Paper',
+      selectionBand: 'borderline',
+      reasons: ['thin_method_evidence'],
+      motivationSummary: '这篇和当前方向相关，但证据还不够硬。',
+      methodTakeaway: '它补的是 memory archive 侧面材料。',
+      relatedSeeds: [{ title: 'Darwin Godel Machine' }]
+    }
+  ]);
+
+  const text = buildTelegramMessage({
+    dateString: '2026-03-17',
+    selectedPapers: [],
+    watchlistPapers: [
+      {
+        title: 'Watchlist Only Paper'
+      }
+    ],
+    artifactPackage: '/tmp/research-intelligence-2026-03-17.tar.gz'
+  });
+
+  assert.match(markdown, /今天没有论文通过主推筛选/);
+  assert.match(markdown, /观察池 \/ Watchlist/);
+  assert.match(markdown, /Watchlist Only Paper/);
+  assert.match(text, /今天没有论文通过主推筛选/);
+  assert.match(text, /已保留 1 篇观察池论文/);
+});
+
 test('buildMethodTreeDeltaMarkdown summarizes method-tree updates and paper cards', () => {
   const markdown = buildMethodTreeDeltaMarkdown({
     dateString: '2026-03-13',

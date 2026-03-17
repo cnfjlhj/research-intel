@@ -16,6 +16,7 @@ const {
   buildWorkerPrompt,
   buildWorkerSessionName
 } = require('./lib/worker');
+const { buildCodexRuntimePath, resolveCodexLaunchSpec } = require('./lib/codex-cli');
 
 const ROOT_DIR = path.join(__dirname, '../..');
 const DEFAULT_PROFILE_DIR = path.join(ROOT_DIR, 'work/research-intel/profile');
@@ -156,15 +157,24 @@ function buildWorkerCommand({ projectDir, sessionName, promptPath }) {
     }
   }
   const trustOverride = buildProjectTrustConfigOverride(projectDir);
+  const launchSpec = resolveCodexLaunchSpec({
+    env: process.env,
+    nodeBinary: process.execPath
+  });
+  const runtimePath = buildCodexRuntimePath(process.env.PATH, launchSpec.codexBinary);
+  const launchPrefix = [
+    launchSpec.command,
+    ...launchSpec.argsPrefix
+  ].map(value => `'${String(value).replace(/'/g, `'\\''`)}'`).join(' ');
 
   return [
     `cd '${projectDir}'`,
     `export TMUX_SESSION='${sessionName}'`,
-    `export PATH='${path.join(projectDir, 'bin')}':"$PATH"`,
+    `export PATH='${path.join(projectDir, 'bin')}':'${runtimePath.replace(/'/g, `'\\''`)}'`,
     ...proxyLines,
     `PROMPT_FILE='${promptPath}'`,
     'PROMPT="$(cat "$PROMPT_FILE")"',
-    `exec codex --no-alt-screen --dangerously-bypass-approvals-and-sandbox --search -c '${trustOverride.replace(/'/g, `'\\''`)}' -C '${projectDir}' "$PROMPT"`
+    `exec ${launchPrefix} --no-alt-screen --dangerously-bypass-approvals-and-sandbox --search -c '${trustOverride.replace(/'/g, `'\\''`)}' -C '${projectDir}' "$PROMPT"`
   ].join('\n');
 }
 

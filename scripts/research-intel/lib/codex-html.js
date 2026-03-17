@@ -12,6 +12,7 @@ const {
   DEFAULT_CODEX_HTML_REASONING_EFFORT,
   DEFAULT_CODEX_HTML_TIMEOUT_MS
 } = require('./codex-enhancement-config');
+const { buildCodexRuntimePath, resolveCodexLaunchSpec } = require('./codex-cli');
 
 const KATEX_VERSION = '0.16.9';
 const KATEX_PRIMARY_BASE_URL = `https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist`;
@@ -527,6 +528,7 @@ function buildCodexHtmlPrompt({
     '3. 如果你不确定某个数字、表格项或 figure 细节，要明确标注“不确定”，不要编造。',
     '4. 如果论文没有 OpenReview / rebuttal 信息，不要伪造该部分。',
     '5. 除公式和必要术语外，尽量使用中文。',
+    '5.1 所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文；不要出现 “Research Product Page”“Paper Overview”“Hero”“Overview” 这类英文栏目名。',
     '6. 页面要有“作品感”，不能退化成普通单栏摘要页或一串机械堆叠的白色卡片。',
     '7. 至少包含这些视觉层次中的大部分：沉浸式 hero、概览信息带、目录/导航、双栏或多栏内容区、figure/table 证据卡、评议区、结尾收束区。',
     '8. 可见标题（h1/h2/h3）中必须直接出现这些字样，可以在前后加编号或副标题，但不能替换这些词：',
@@ -640,6 +642,7 @@ function buildCodexInlineHtmlPrompt({
     '- 对论文中的关键实验表格，尽量把真实表格数据整理进页面，而不是只写一句“效果很好”。',
     '- 你的评论部分要有洞见，不能只是礼貌复述作者贡献。',
     '- 除公式以及少量必要英文术语外，尽可能用中文。',
+    '- 所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文；避免出现 “Research Product Page”“Paper Overview”“Hero”“Overview” 这类英文栏目名。',
     '',
     `attached images 数量：${pageImageCount}`,
     '',
@@ -705,6 +708,7 @@ function buildHtmlRepairPrompt({
     '- 评论部分仍然要有洞见，不能在修补时被你删成客套话。',
     '- 末尾自动注入的论文页面证据图库会在修补后重新补回；不要机械复制那一大段 base64 图库。',
     '- 修补时仍然以 paper.pdf 是唯一真相来源；如果当前 HTML、文本预览和 PDF 冲突，以 PDF 为准。',
+    '- 所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文；避免出现 “Research Product Page”“Paper Overview”“Hero”“Overview” 这类英文栏目名。',
     ...(paperPdfPath ? [`- 当前论文 PDF: ${paperPdfPath}`] : []),
     ...(paperTextPath ? [`- 当前论文全文文本抽取（仅辅助）: ${paperTextPath}`] : []),
     ...(currentHtmlPath ? [`- 当前 HTML 文件路径: ${currentHtmlPath}`] : []),
@@ -795,6 +799,7 @@ function buildHtmlEnhancementPrompt({
     '- 最终 HTML 只能保留一份完整文档：只能出现一个 <!DOCTYPE html>、一个 <html>、一个 <body>。不要把旧页面整份复制到新页面后面。',
     '- 至少把 2 个关键 figure/table 证据块真正放进相关章节，而不是只在结尾泛泛提一句“见图表”。',
     '- 如果 appendix 或实验页里给出了可复现细节，要补进实验方法与实验设计，而不是停留在高层摘要。',
+    '- 所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文；避免出现 “Research Product Page”“Paper Overview”“Hero”“Overview” 这类英文栏目名。',
     '',
     '你要读取并综合这些材料：',
     '1. 当前 HTML（保留其视觉优点）',
@@ -1653,6 +1658,17 @@ function looksLikeLocalImageAssetRef(value) {
   return /\.(?:avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i.test(normalized) || /^file:\/\//i.test(normalized);
 }
 
+function looksLikeLocalValidationAssetRef(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return false;
+  }
+  if (/^(?:data:|https?:|about:blank$|javascript:|mailto:|tel:|#)/i.test(normalized)) {
+    return false;
+  }
+  return /\.(?:avif|gif|jpe?g|png|svg|webp|css|js)(?:[?#].*)?$/i.test(normalized) || /^file:\/\//i.test(normalized);
+}
+
 function normalizePageAssetCandidate(filePath, { existsSync = fs.existsSync, readdirSync = fs.readdirSync, realpathSync = fs.realpathSync.native || fs.realpathSync } = {}) {
   if (!filePath) {
     return null;
@@ -1696,38 +1712,57 @@ function normalizePageAssetCandidate(filePath, { existsSync = fs.existsSync, rea
 
 function resolveLocalImageAssetPath(rawUrl, {
   htmlPath,
+  shouldResolveAssetRef = looksLikeLocalImageAssetRef,
   existsSync = fs.existsSync,
   readdirSync = fs.readdirSync,
   realpathSync = fs.realpathSync.native || fs.realpathSync
 } = {}) {
-  if (!looksLikeLocalImageAssetRef(rawUrl) || !htmlPath) {
+  if (!shouldResolveAssetRef(rawUrl) || !htmlPath) {
     return null;
   }
 
   const { base } = splitUrlDecoration(rawUrl);
-  let candidatePath = '';
+  const candidatePaths = [];
   try {
     if (/^file:\/\//i.test(base)) {
-      candidatePath = fileURLToPath(base);
+      candidatePaths.push(fileURLToPath(base));
     } else if (path.isAbsolute(base)) {
-      candidatePath = base;
+      candidatePaths.push(base);
     } else {
-      candidatePath = path.resolve(path.dirname(htmlPath), decodeURIComponent(base));
+      const decodedBase = decodeURIComponent(base);
+      let currentDir = path.dirname(htmlPath);
+      candidatePaths.push(path.resolve(currentDir, decodedBase));
+      for (let depth = 0; depth < 4; depth += 1) {
+        const parentDir = path.dirname(currentDir);
+        if (!parentDir || parentDir === currentDir) {
+          break;
+        }
+        candidatePaths.push(path.resolve(parentDir, decodedBase));
+        currentDir = parentDir;
+      }
     }
   } catch {
     return null;
   }
 
-  return normalizePageAssetCandidate(candidatePath, {
-    existsSync,
-    readdirSync,
-    realpathSync
-  });
+  for (const candidatePath of [...new Set(candidatePaths.filter(Boolean))]) {
+    const resolvedPath = normalizePageAssetCandidate(candidatePath, {
+      existsSync,
+      readdirSync,
+      realpathSync
+    });
+    if (resolvedPath) {
+      return resolvedPath;
+    }
+  }
+
+  return null;
 }
 
 function replaceLocalImageAssetRefs(html, {
   htmlPath,
   transformResolvedPath,
+  shouldResolveAssetRef = looksLikeLocalImageAssetRef,
   existsSync = fs.existsSync,
   readdirSync = fs.readdirSync,
   realpathSync = fs.realpathSync.native || fs.realpathSync,
@@ -1736,6 +1771,7 @@ function replaceLocalImageAssetRefs(html, {
   const replacer = rawValue => {
     const resolvedPath = resolveLocalImageAssetPath(rawValue, {
       htmlPath,
+      shouldResolveAssetRef,
       existsSync,
       readdirSync,
       realpathSync
@@ -1765,6 +1801,7 @@ function replaceLocalImageAssetRefs(html, {
 function normalizeLocalImageAssetRefs(html, options = {}) {
   return replaceLocalImageAssetRefs(html, {
     ...options,
+    shouldResolveAssetRef: looksLikeLocalValidationAssetRef,
     transformResolvedPath: (resolvedPath, { htmlPath }) => toPosixPath(path.relative(path.dirname(htmlPath), resolvedPath))
   });
 }
@@ -2190,9 +2227,17 @@ async function runCodexHtmlGeneration({
 
   ensureDir(runtimePaths.runtimeDir);
   fs.writeFileSync(runtimePaths.promptPath, promptText, 'utf8');
+  const launchSpec = resolveCodexLaunchSpec({
+    env: process.env,
+    nodeBinary: process.execPath
+  });
+  const tmuxEnv = {
+    ...process.env,
+    PATH: buildCodexRuntimePath(process.env.PATH, launchSpec.codexBinary)
+  };
   fs.writeFileSync(runtimePaths.configPath, `${JSON.stringify({
-    command: 'codex',
-    args,
+    command: launchSpec.command,
+    args: [...launchSpec.argsPrefix, ...args],
     cwd: workingDir,
     inputPath: runtimePaths.promptPath,
     stdoutPath: runtimePaths.stdoutPath,
@@ -2210,7 +2255,7 @@ async function runCodexHtmlGeneration({
     workingDir,
     runnerScriptPath: DETACHED_COMMAND_RUNNER_PATH,
     configPath: runtimePaths.configPath,
-    environmentEntries: buildCodexHtmlTmuxEnvEntries(process.env)
+    environmentEntries: buildCodexHtmlTmuxEnvEntries(tmuxEnv)
   });
   const status = await waitForCodexHtmlTmuxCompletion({
     sessionName,

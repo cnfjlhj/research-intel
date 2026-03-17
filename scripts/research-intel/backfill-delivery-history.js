@@ -127,18 +127,40 @@ function collectArtifactsForDate({ rootDir, recordsDir, dateString, entries }) {
 
   const workLedgerPath = path.join(rootDir, 'work', 'research-intel', 'daily', dateString, 'method_tree.md');
   const recordsLedgerPath = path.join(recordsDir, 'daily', dateString, 'method_tree.md');
-  const ledgerPath = fs.existsSync(workLedgerPath)
-    ? workLedgerPath
-    : (fs.existsSync(recordsLedgerPath) ? recordsLedgerPath : '');
+  const workBriefPath = path.join(rootDir, 'work', 'research-intel', 'daily', dateString, 'brief.md');
+  const recordsBriefPath = path.join(recordsDir, 'daily', dateString, 'brief.md');
+  let ledgerPath = '';
+  let ledgerTitle = '';
+  if (fs.existsSync(workLedgerPath)) {
+    ledgerPath = workLedgerPath;
+    ledgerTitle = 'Research Ledger';
+  } else if (fs.existsSync(recordsLedgerPath)) {
+    ledgerPath = recordsLedgerPath;
+    ledgerTitle = 'Research Ledger';
+  } else if (fs.existsSync(workBriefPath)) {
+    ledgerPath = workBriefPath;
+    ledgerTitle = 'Research Brief';
+  } else if (fs.existsSync(recordsBriefPath)) {
+    ledgerPath = recordsBriefPath;
+    ledgerTitle = 'Research Brief';
+  }
 
   return {
     paperFiles,
     ledgerPath,
+    ledgerTitle,
     missingFiles
   };
 }
 
-function buildBackfillReceipts({ rootDir, dateString, paperFiles, ledgerPath, nowIso }) {
+function buildBackfillReceipts({
+  rootDir,
+  dateString,
+  paperFiles,
+  ledgerPath,
+  ledgerTitle = 'Research Ledger',
+  nowIso
+}) {
   const records = [];
 
   for (const paper of paperFiles) {
@@ -159,7 +181,7 @@ function buildBackfillReceipts({ rootDir, dateString, paperFiles, ledgerPath, no
     records.push({
       date: dateString,
       kind: 'ledger',
-      title: 'Research Ledger',
+      title: ledgerTitle,
       filePath: repoRelativePath(rootDir, ledgerPath),
       fileHash: hashFile(ledgerPath),
       messageId: null,
@@ -177,7 +199,8 @@ function persistDeliveryStatusForDate({
   historyDir,
   dateString,
   paperFiles,
-  ledgerPath
+  ledgerPath,
+  ledgerTitle = 'Research Ledger'
 }) {
   const workRunDir = path.join(rootDir, 'work', 'research-intel', 'daily', dateString);
   const recordsRunDir = path.join(recordsDir, 'daily', dateString);
@@ -185,7 +208,8 @@ function persistDeliveryStatusForDate({
     dateString,
     historyDir,
     paperFiles,
-    ledgerPath
+    ledgerPath,
+    ledgerTitle
   });
 
   const persistedStatus = {
@@ -246,6 +270,7 @@ function backfillDeliveryHistory({
       dateString: currentDate,
       paperFiles: artifacts.paperFiles,
       ledgerPath: artifacts.ledgerPath,
+      ledgerTitle: artifacts.ledgerTitle,
       nowIso
     }).filter(record => {
       const key = buildReceiptKey(record);
@@ -265,7 +290,8 @@ function backfillDeliveryHistory({
         historyDir,
         dateString: currentDate,
         paperFiles: artifacts.paperFiles,
-        ledgerPath: artifacts.ledgerPath
+        ledgerPath: artifacts.ledgerPath,
+        ledgerTitle: artifacts.ledgerTitle
       });
     }
   }
@@ -289,7 +315,8 @@ function backfillDeliveryHistory({
           historyDir,
           dateString: currentDate,
           paperFiles: artifacts.paperFiles,
-          ledgerPath: artifacts.ledgerPath
+          ledgerPath: artifacts.ledgerPath,
+          ledgerTitle: artifacts.ledgerTitle
         });
       }
     }

@@ -1159,8 +1159,13 @@ function packageRunArtifacts(runPaths) {
 }
 
 function packageTelegramArtifacts(runPaths, artifactPapers) {
+  const zeroPaperDay = artifactPapers.length === 0;
   return {
-    telegramLedgerPath: path.join(runPaths.runDir, 'method_tree.md'),
+    telegramLedgerPath: path.join(
+      runPaths.runDir,
+      zeroPaperDay ? 'brief.md' : 'method_tree.md'
+    ),
+    telegramLedgerTitle: zeroPaperDay ? 'Research Brief' : 'Research Ledger',
     paperFiles: artifactPapers.map(paper => ({
       title: paper.title,
       filePath: paper.htmlPath
@@ -1230,9 +1235,6 @@ async function main() {
     profile,
     now
   );
-  if (generationQueue.length === 0) {
-    throw new Error('No candidate papers were selected for today.');
-  }
 
   writeJson(path.join(runPaths.runDir, 'selected_papers.json'), generationQueue);
   writeJson(path.join(runPaths.runDir, 'watchlist_papers.json'), initialWatchlist);
@@ -1450,7 +1452,8 @@ async function main() {
     dateString,
     historyDir: options.historyDir,
     paperFiles: telegramBundles.paperFiles,
-    ledgerPath: telegramBundles.telegramLedgerPath
+    ledgerPath: telegramBundles.telegramLedgerPath,
+    ledgerTitle: telegramBundles.telegramLedgerTitle
   });
   const persistDeliveryStatus = status => ({
     ...status,
@@ -1485,7 +1488,7 @@ async function main() {
       }
 
       const caption = item.kind === 'ledger'
-        ? `Research Ledger ${dateString}`
+        ? `${item.title || 'Research Ledger'} ${dateString}`
         : `HTML ${index + 1}: ${item.title.slice(0, 80)}`;
 
       try {

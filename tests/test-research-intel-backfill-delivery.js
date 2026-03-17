@@ -134,3 +134,47 @@ test('backfillDeliveryHistory is idempotent when receipts already exist', () => 
   assert.equal(second.createdReceipts, 0);
   assert.equal(readJsonl(path.join(historyDir, 'telegram_receipts.jsonl')).length, 2);
 });
+
+test('backfillDeliveryHistory falls back to brief.md as the ledger artifact on zero-paper days', () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-backfill-brief-'));
+  const recordsDir = path.join(rootDir, 'research-intel-records');
+  const historyDir = path.join(recordsDir, 'history');
+  const dateString = '2026-03-17';
+  const runDir = path.join(rootDir, 'work', 'research-intel', 'daily', dateString);
+  const recordsRunDir = path.join(recordsDir, 'daily', dateString);
+  const briefPath = path.join(runDir, 'brief.md');
+
+  fs.mkdirSync(historyDir, { recursive: true });
+  fs.mkdirSync(recordsRunDir, { recursive: true });
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(briefPath, '# brief\n', 'utf8');
+  fs.writeFileSync(path.join(recordsRunDir, 'brief.md'), '# brief\n', 'utf8');
+  fs.writeFileSync(
+    path.join(historyDir, 'sent_papers.jsonl'),
+    `${JSON.stringify({
+      date: dateString,
+      title: 'No paper day placeholder',
+      htmlPath: ''
+    })}\n`,
+    'utf8'
+  );
+
+  const result = backfillDeliveryHistory({
+    rootDir,
+    recordsDir,
+    dateString,
+    nowIso: '2026-03-17T01:24:45.000Z'
+  });
+
+  assert.equal(result.createdReceipts, 1);
+  const receipts = readJsonl(path.join(historyDir, 'telegram_receipts.jsonl'));
+  assert.deepEqual(
+    receipts.map(item => [item.kind, item.title, item.filePath]),
+    [['ledger', 'Research Brief', 'work/research-intel/daily/2026-03-17/brief.md']]
+  );
+
+  const workStatus = readJson(path.join(runDir, 'delivery_status.json'));
+  assert.equal(workStatus.expectedCount, 1);
+  assert.equal(workStatus.items[0].title, 'Research Brief');
+  assert.equal(workStatus.items[0].filePath, 'work/research-intel/daily/2026-03-17/brief.md');
+});

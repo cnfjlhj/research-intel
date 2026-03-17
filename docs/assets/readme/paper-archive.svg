@@ -2,98 +2,98 @@
   <rect width="1600" height="920" rx="40" fill="#F6F1E7"/>
   <rect x="64" y="64" width="1472" height="792" rx="28" fill="#FFFDF8" stroke="#E2D9C8" stroke-width="2"/>
   <text x="104" y="144" fill="#172033" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="54" font-weight="700">
-    A paper page is a deliverable, not a throwaway summary
+    单篇论文页是一份交付物，不是一次性摘要
   </text>
   <text x="104" y="194" fill="#526075" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="24">
-    The README should show what lands for one paper when the chain succeeds.
+    当一篇论文顺利走完整条链路，真正落下来的就是这些内容。
   </text>
 
   <rect x="104" y="250" width="690" height="520" rx="30" fill="#FFFFFF" stroke="#D8DEE8" stroke-width="2"/>
   <text x="154" y="320" fill="#111827" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="42" font-weight="700">
-    Paper Archive
+    单篇论文档案
   </text>
   <text x="154" y="360" fill="#6B7280" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    title, problem framing, and why it matters now
+    标题、问题框定，以及它为什么值得今天看
   </text>
   <rect x="154" y="404" width="590" height="18" rx="9" fill="#DCEBF8"/>
   <rect x="154" y="446" width="590" height="94" rx="20" fill="#F8FBFF" stroke="#D8E7F5"/>
   <text x="182" y="500" fill="#10213A" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="26" font-weight="600">
-    Research brief and positioning
+    研究摘要与定位
   </text>
   <rect x="154" y="566" width="282" height="130" rx="22" fill="#FFF7ED" stroke="#F5C98B"/>
   <text x="182" y="620" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="26" font-weight="600">
-    Method
+    方法
   </text>
   <text x="182" y="656" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    core idea, pipeline,
+    核心想法、流程拆解，
   </text>
   <text x="182" y="686" fill="#8A4B12" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    and assumptions
+    以及关键假设
   </text>
   <rect x="462" y="566" width="282" height="130" rx="22" fill="#EFFCF4" stroke="#8FD7A8"/>
   <text x="490" y="620" fill="#13633A" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="26" font-weight="600">
-    Results
+    结果
   </text>
   <text x="490" y="656" fill="#13633A" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    headline metrics,
+    关键指标、
   </text>
   <text x="490" y="686" fill="#13633A" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    comparisons, caveats
+    对比关系与限制条件
   </text>
 
   <rect x="872" y="250" width="560" height="136" rx="24" fill="#132238"/>
   <text x="910" y="314" fill="#F8FAFC" font-family="'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="700">
-    Sections worth showing
+    一篇成型页面该包含的部分
   </text>
   <text x="910" y="358" fill="#CBD5E1" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="22">
-    These are the parts that make a paper page feel finished.
+    这些模块让单篇论文页真正具备“可交付”的完成度。
   </text>
 
   <rect x="872" y="420" width="260" height="122" rx="22" fill="#FFFFFF" stroke="#D8DEE8"/>
   <text x="902" y="474" fill="#172033" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="28" font-weight="600">
-    Critique
+    评论
   </text>
   <text x="902" y="512" fill="#526075" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="21">
-    failure modes, blind spots,
+    失败模式、盲点，
   </text>
   <text x="902" y="540" fill="#526075" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="21">
-    what to distrust
+    以及哪些地方不能轻信
   </text>
 
   <rect x="1172" y="420" width="260" height="122" rx="22" fill="#FFFFFF" stroke="#D8DEE8"/>
   <text x="1202" y="474" fill="#172033" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="28" font-weight="600">
-    Rebuttal
+    审稿回复
   </text>
   <text x="1202" y="512" fill="#526075" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="21">
-    review signals and
+    审稿信号与
   </text>
   <text x="1202" y="540" fill="#526075" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="21">
-    later discussion
+    后续讨论整理
   </text>
 
   <rect x="872" y="576" width="260" height="122" rx="22" fill="#FFFFFF" stroke="#D8DEE8"/>
   <text x="902" y="630" fill="#172033" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="28" font-weight="600">
-    Validation
+    校验
   </text>
   <text x="902" y="668" fill="#526075" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="21">
-    json records and
+    校验记录与
   </text>
   <text x="902" y="696" fill="#526075" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="21">
-    browser screenshots
+    浏览器截图
   </text>
 
   <rect x="1172" y="576" width="260" height="122" rx="22" fill="#FFFFFF" stroke="#D8DEE8"/>
   <text x="1202" y="630" fill="#172033" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="28" font-weight="600">
-    Sidecars
+    附属文件
   </text>
   <text x="1202" y="668" fill="#526075" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="21">
-    paper metadata and
+    论文元信息与
   </text>
   <text x="1202" y="696" fill="#526075" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="21">
-    machine-readable notes
+    机器可读笔记
   </text>
 
   <text x="104" y="816" fill="#6B7280" font-family="'SF Pro Text', 'Segoe UI', sans-serif" font-size="20">
-    Use real baohe screenshots only after the remote sample is reachable again. Until then, keep the README visual language evidence-safe.
+    每篇论文页都应该像一份随时可回看的研究交付物，同时保持对可核验证据的忠诚。
   </text>
 </svg>
