@@ -1,419 +1,451 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CL-bench: A Benchmark for Context Learning - 深度解读</title>
-    <!-- KaTeX for math rendering -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
-    <!-- Tailwind CSS for styling -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap');
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Research Intel Warm Editorial Template</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --apple-bg: #efe6d8;
+      --apple-paper: rgba(255, 249, 240, 0.88);
+      --apple-text: #2f261f;
+      --apple-muted: #6d6054;
+      --apple-accent: #bf7443;
+      --apple-sage: #758d80;
+      --apple-gold: #cfb07a;
+      --apple-border: rgba(73, 53, 37, 0.12);
+      --apple-shadow: 0 24px 60px rgba(70, 45, 26, 0.10);
+    }
 
-        :root {
-            --apple-bg: #f5f5f7;
-            --apple-text: #1d1d1f;
-            --apple-blue: #0066cc;
-        }
+    * {
+      box-sizing: border-box;
+    }
 
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--apple-bg);
-            color: var(--apple-text);
-            line-height: 1.6;
-            overflow-x: hidden;
-        }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Noto Serif SC", Georgia, serif;
+      background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.78), transparent 34%),
+        radial-gradient(circle at 85% 12%, rgba(207, 176, 122, 0.18), transparent 22%),
+        linear-gradient(180deg, #f6efe4 0%, var(--apple-bg) 50%, #f4ecde 100%);
+      color: var(--apple-text);
+      line-height: 1.7;
+      min-height: 100vh;
+    }
 
-        .apple-container {
-            max-width: 1000px;
-            margin: 0 auto;
-            padding: 0 20px;
-        }
+    .apple-container {
+      width: min(1160px, calc(100vw - 40px));
+      margin: 0 auto;
+    }
 
-        .glass-card {
-            background: rgba(255, 255, 255, 0.8);
-            backdrop-filter: blur(20px);
-            border-radius: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
-            transition: transform 0.3s ease;
-        }
+    .hero-gradient {
+      position: relative;
+      margin: 18px auto 0;
+      padding: 56px 0 28px;
+    }
 
-        .section-title {
-            font-size: 2.5rem;
-            font-weight: 600;
-            letter-spacing: -0.02em;
-            margin-bottom: 2rem;
-            text-align: center;
-        }
+    .hero-gradient::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 34px;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(245, 234, 216, 0.72)),
+        radial-gradient(circle at top right, rgba(117, 141, 128, 0.20), transparent 28%);
+      border: 1px solid var(--apple-border);
+      box-shadow: var(--apple-shadow);
+      z-index: 0;
+    }
 
-        .highlight-text {
-            color: var(--apple-blue);
-            font-weight: 600;
-        }
+    .hero-inner,
+    .section-shell {
+      position: relative;
+      z-index: 1;
+    }
 
-        .katex-display {
-            overflow-x: auto;
-            overflow-y: hidden;
-            padding: 10px 0;
-        }
+    .hero-inner {
+      padding: 18px 28px 26px;
+    }
 
-        /* 苹果风格的滚动条 */
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      border-radius: 999px;
+      background: rgba(255, 250, 244, 0.82);
+      border: 1px solid rgba(73, 53, 37, 0.10);
+      color: var(--apple-accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
 
-        ::-webkit-scrollbar-track {
-            background: #f1f1f1;
-        }
+    .hero-copy {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+      gap: 28px;
+      margin-top: 20px;
+      align-items: end;
+    }
 
-        ::-webkit-scrollbar-resizer {
-            background: #888;
-            border-radius: 10px;
-        }
+    .hero-copy h1 {
+      margin: 0;
+      max-width: 11ch;
+      font-size: clamp(46px, 6vw, 76px);
+      line-height: 0.96;
+      letter-spacing: -0.05em;
+    }
 
-        ::-webkit-scrollbar-thumb:hover {
-            background: #555;
-        }
+    .hero-copy p {
+      margin: 0;
+      color: var(--apple-muted);
+      font-size: 17px;
+    }
 
-        .tag {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            background: #e8e8ed;
-            font-size: 0.85rem;
-            margin-right: 8px;
-            margin-bottom: 8px;
-        }
+    .pill-row,
+    .quick-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
 
-        .hero-gradient {
-            background: linear-gradient(180deg, #fff 0%, var(--apple-bg) 100%);
-        }
-    </style>
+    .pill,
+    .quick-nav a {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(255, 249, 240, 0.84);
+      border: 1px solid rgba(73, 53, 37, 0.10);
+      color: var(--apple-text);
+      font-size: 13px;
+      text-decoration: none;
+    }
+
+    .quick-nav a:hover {
+      border-color: rgba(191, 116, 67, 0.42);
+      color: var(--apple-accent);
+    }
+
+    .info-band {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 28px;
+    }
+
+    .glass-card {
+      background: var(--apple-paper);
+      border-radius: 26px;
+      border: 1px solid var(--apple-border);
+      box-shadow: 0 18px 44px rgba(56, 37, 21, 0.07);
+      backdrop-filter: blur(12px);
+    }
+
+    .info-card {
+      padding: 18px 18px 20px;
+    }
+
+    .info-card strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 15px;
+    }
+
+    .info-card p {
+      margin: 0;
+      color: var(--apple-muted);
+      font-size: 14px;
+    }
+
+    .section-shell {
+      margin: 28px auto 0;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+
+    .section-title {
+      margin: 0;
+      font-size: clamp(30px, 4vw, 42px);
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+    }
+
+    .section-header p,
+    .story-card p,
+    .review-note p {
+      margin: 0;
+      color: var(--apple-muted);
+    }
+
+    .story-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
+    }
+
+    .story-card,
+    .evidence-card,
+    .review-note,
+    .summary-card {
+      padding: 22px 22px 24px;
+    }
+
+    .story-card h3,
+    .evidence-card h3,
+    .review-note h3,
+    .summary-card h3 {
+      margin: 0 0 10px;
+      font-size: 20px;
+      letter-spacing: -0.02em;
+    }
+
+    .accent-rule {
+      width: 54px;
+      height: 3px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+      background: linear-gradient(90deg, var(--apple-accent), var(--apple-gold));
+    }
+
+    .evidence-grid,
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .evidence-card {
+      min-height: 240px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(245, 235, 221, 0.82));
+    }
+
+    .placeholder-figure {
+      display: grid;
+      place-items: center;
+      min-height: 122px;
+      margin-top: 14px;
+      border-radius: 18px;
+      border: 1px dashed rgba(117, 141, 128, 0.42);
+      background:
+        linear-gradient(135deg, rgba(117, 141, 128, 0.10), rgba(255, 255, 255, 0.56));
+      color: var(--apple-muted);
+      font-size: 13px;
+      text-align: center;
+      padding: 16px;
+    }
+
+    .review-note {
+      background: linear-gradient(180deg, rgba(255, 250, 244, 0.94), rgba(240, 231, 218, 0.90));
+    }
+
+    .review-note ul {
+      margin: 14px 0 0;
+      padding-left: 18px;
+      color: var(--apple-muted);
+    }
+
+    .summary-card {
+      min-height: 170px;
+    }
+
+    .summary-card:nth-child(2) {
+      background: linear-gradient(180deg, rgba(255, 249, 240, 0.92), rgba(238, 246, 241, 0.92));
+    }
+
+    .summary-card:nth-child(3) {
+      background: linear-gradient(180deg, rgba(255, 249, 240, 0.92), rgba(250, 239, 226, 0.92));
+    }
+
+    @media (max-width: 920px) {
+      .hero-copy,
+      .story-grid,
+      .info-band,
+      .evidence-grid,
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-inner {
+        padding: 20px 20px 24px;
+      }
+    }
+  </style>
 </head>
-
 <body>
-
-    <!-- Hero Section -->
-    <section class="hero-gradient py-20 px-4 text-center">
-        <div class="apple-container">
-            <p class="text-sm font-semibold tracking-widest text-gray-500 uppercase mb-4">arXiv:2602.03587v1 [cs.CL]</p>
-            <h1 class="text-5xl md:text-7xl font-bold mb-6 tracking-tight">CL-BENCH</h1>
-            <p class="text-2xl md:text-3xl font-light text-gray-600 mb-10">一个衡量语言模型“上下文学习”能力的真实世界基准</p>
-            <div class="flex flex-wrap justify-center gap-4 text-gray-500 text-sm italic">
-                <span>Shihan Dou*, Ming Zhang*, Tao Gui†, Yu-Gang Jiang, Di Wang...</span>
-                <span class="font-bold">Hunyuan Team, Tencent & Fudan University</span>
-            </div>
+  <section class="hero-gradient apple-container">
+    <div class="hero-inner">
+      <span class="eyebrow">Research Intel Template</span>
+      <div class="hero-copy">
+        <div>
+          <h1>论文单篇页的暖色专题模板</h1>
         </div>
-    </section>
+        <p>
+          这个模板不是给模型抄内容，而是给它一个明确的气质锚点：
+          更像有叙事张力的研究专题页，而不是冷色研究简报、KPI 面板或机械堆卡片。
+        </p>
+      </div>
+      <div class="pill-row">
+        <span class="pill">强 hero 标题</span>
+        <span class="pill">暖白 / 米色 / 浅金</span>
+        <span class="pill">叙事导语 + 概览信息带</span>
+        <span class="pill">证据卡嵌入正文</span>
+      </div>
+      <div class="quick-nav">
+        <a href="#motivation">研究动机</a>
+        <a href="#methods">方法结构</a>
+        <a href="#evidence">图表证据</a>
+        <a href="#review">评论</a>
+      </div>
+      <div class="info-band">
+        <article class="glass-card info-card">
+          <strong>先给结论</strong>
+          <p>首屏应该先把读者拉进问题与贡献，而不是一上来就做成数字面板。</p>
+        </article>
+        <article class="glass-card info-card">
+          <strong>为什么今天值得读</strong>
+          <p>给出 1-2 句明确的阅读理由，让读者知道这篇论文在方法谱系里处于什么位置。</p>
+        </article>
+        <article class="glass-card info-card">
+          <strong>读完要带走什么</strong>
+          <p>用结构化信息带承接关键信息，但别让信息带主导整页视觉。</p>
+        </article>
+      </div>
+    </div>
+  </section>
 
-    <!-- 1. 研究动机 -->
-    <section class="py-16 apple-container">
-        <h2 class="section-title">1. 研究动机：被忽视的“上下文学习”能力</h2>
-        <div class="glass-card p-10">
-            <div class="grid md:grid-cols-2 gap-10 items-center">
-                <div>
-                    <h3 class="text-xl font-bold mb-4">核心挑战</h3>
-                    <p class="mb-4 text-gray-700">当前的大语言模型（LMs）擅长根据提示（Prompts）利用其预训练知识进行推理。然而，现实世界的任务往往是<span
-                            class="highlight-text">上下文相关（Context-dependent）</span>的。</p>
-                    <p class="mb-4 text-gray-700">模型必须具备学习任务特定上下文、并利用其在预训练阶段从未见过的新知识（New Knowledge）来解决问题的能力。研究者将其定义为
-                        <span class="highlight-text">Context Learning（上下文学习）</span>。</p>
-                </div>
-                <div class="bg-gray-50 p-6 rounded-xl border border-gray-100">
-                    <p class="text-center italic text-sm text-gray-400 mb-4">[Figure 1: 现实复杂性与优化路径的错位]</p>
-                    <ul class="text-sm space-y-2">
-                        <li><strong>提示工程 (Prompt Eng):</strong> 基于预训练知识。</li>
-                        <li><strong>上下文工程 (Context Eng):</strong> 如何检索和组织内容。</li>
-                        <li><strong>上下文学习 (Context Learning):</strong> <span
-                                class="bg-yellow-100">本文核心</span>，即模型是否真的能从提供的复杂上下文中“学会”新规律。</li>
-                    </ul>
-                </div>
-            </div>
-            <div class="mt-8 border-t pt-8">
-                <p class="font-semibold">为什么这很重要？</p>
-                <p class="text-gray-600">真正的智能体需要像人类一样，即时内化陌生领域的法律体系、产品手册或通过分析实验数据发现物理规律。如果 LM
-                    无法突破这一瓶颈，它们将永远只是“静态知识库”，而非“动态学习者”。</p>
-            </div>
-        </div>
-    </section>
+  <section id="motivation" class="section-shell apple-container">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">研究动机</h2>
+        <p>这一段适合先讲“问题为什么存在、为什么值得解决”，再铺开正文。</p>
+      </div>
+      <span class="pill">Warm Editorial Flow</span>
+    </div>
+    <div class="story-grid">
+      <article class="glass-card story-card">
+        <div class="accent-rule"></div>
+        <h3>先把读者带入论文冲突</h3>
+        <p>
+          好的单篇页不是把摘要拆成小卡片，而是先明确矛盾、限制与 stakes。
+          叙事开场要像专题报道：先建立 tension，再展开方法与证据。
+        </p>
+      </article>
+      <article class="glass-card story-card">
+        <div class="accent-rule"></div>
+        <h3>信息带负责承接，不负责取代正文</h3>
+        <p>
+          可以有数据点、标签和速览块，但正文仍然要承担解释工作。
+          读者应当先感到“这篇论文值得读”，再进入细节。
+        </p>
+      </article>
+    </div>
+  </section>
 
-    <!-- 2. 数学表示及建模 -->
-    <section class="py-16 bg-white">
-        <div class="apple-container">
-            <h2 class="section-title">2. 数学表示与评估流程</h2>
-            <div class="grid md:grid-cols-2 gap-8">
-                <div class="p-8">
-                    <h3 class="text-2xl font-bold mb-6">评估形式化</h3>
-                    <p class="mb-4">我们将一个测试案例定义为三元组 \( (C, T, R) \)：</p>
-                    <ul class="list-disc pl-6 space-y-4 mb-6">
-                        <li>\( C \)：上下文信息（如新代码库、实验日志），平均包含 \( 10.4K \) tokens。</li>
-                        <li>\( T = \{t_1, t_2, \dots, t_n\} \)：基于上下文的 \( n \) 个任务（Tasks）。</li>
-                        <li>\( R = \{r_{ij} \in \{0, 1\}\} \)：针对任务 \( t_i \) 的 \( m \) 个验证准则（Rubrics）。</li>
-                    </ul>
-                    <p class="p-4 bg-gray-50 rounded-lg">
-                        模型的解决方案 \( S_i = f(M, C, t_i) \)，其中 \( M \) 为待测模型。
-                        <br><br>
-                        <strong>任务成功判定：</strong>
-                        任务 \( t_i \) 被视为解决，当且仅当满足所有相关准则：
-                        \[ \text{Solved}(t_i) \iff \bigwedge_{j=1}^m \text{Verify}(S_i, r_{ij}) = 1 \]
-                    </p>
-                </div>
-                <div class="p-8">
-                    <h3 class="text-2xl font-bold mb-6">CL-bench 的四大范畴</h3>
-                    <div class="space-y-4">
-                        <div class="p-4 border-l-4 border-blue-500 bg-blue-50">
-                            <strong>Category 1: 领域知识推理 (Deductive)</strong>
-                            <p class="text-sm text-gray-600">医疗、金融、法律建议。模型需内化领域规范。</p>
-                        </div>
-                        <div class="p-4 border-l-4 border-green-500 bg-green-50">
-                            <strong>Category 2: 规则系统应用 (Deductive)</strong>
-                            <p class="text-sm text-gray-600">新编程语言语法、游戏机制、数学公理。</p>
-                        </div>
-                        <div class="p-4 border-l-4 border-yellow-500 bg-yellow-50">
-                            <strong>Category 3: 程序化任务执行 (Deductive)</strong>
-                            <p class="text-sm text-gray-600">产品操作手册、工作流编排。</p>
-                        </div>
-                        <div class="p-4 border-l-4 border-red-500 bg-red-50">
-                            <strong>Category 4: 经验发现与模拟 (Inductive)</strong>
-                            <p class="text-sm text-gray-600"><span class="font-bold">最难！</span>
-                                模型需从实验数据中总结规律（如从电荷轨迹推导磁场）。</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
+  <section id="methods" class="section-shell apple-container">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">核心想法与方法总览</h2>
+        <p>模块形态要拉开：导语、并列卡、证据块、评论块各自承担不同阅读节奏。</p>
+      </div>
+    </div>
+    <div class="story-grid">
+      <article class="glass-card story-card">
+        <div class="accent-rule"></div>
+        <h3>可以有双栏，但别整页一套样式走到底</h3>
+        <p>
+          多栏适合讲方法链条、实验设计和评论对照；如果整页都只有同一种圆角卡片，
+          页面会滑向保守的“研究简报感”。
+        </p>
+      </article>
+      <article class="glass-card story-card">
+        <div class="accent-rule"></div>
+        <h3>让 figure / table 真正服务叙事</h3>
+        <p>
+          关键图表不应只堆在结尾证据库里。至少把最重要的 2 处页面证据嵌回对应章节，
+          明确说清编号、页码、它支持了什么判断。
+        </p>
+      </article>
+    </div>
+  </section>
 
-    <!-- 3. 实验方法与实验设计 -->
-    <section class="py-16 apple-container">
-        <h2 class="section-title">3. 实验方法：为了“无污染”的极致设计</h2>
-        <div class="glass-card p-10">
-            <div class="mb-10">
-                <h3 class="text-xl font-bold mb-4">如何确保模型不是在背诵预训练数据？</h3>
-                <div class="grid md:grid-cols-3 gap-6">
-                    <div class="p-6 bg-white shadow-sm rounded-xl">
-                        <div class="text-blue-500 mb-2 font-bold">① 虚构创造</div>
-                        <p class="text-sm text-gray-500">专家创造了全新的编程语言和架空国家的法律体系。</p>
-                    </div>
-                    <div class="p-6 bg-white shadow-sm rounded-xl">
-                        <div class="text-blue-500 mb-2 font-bold">② 修改现有内容</div>
-                        <p class="text-sm text-gray-500">修改现实中的科学定义或技术文档，制造冲突点。</p>
-                    </div>
-                    <div class="p-6 bg-white shadow-sm rounded-xl">
-                        <div class="text-blue-500 mb-2 font-bold">③ 融入长尾知识</div>
-                        <p class="text-sm text-gray-500">加入最近发布的研究或极其冷门的专业文档。</p>
-                    </div>
-                </div>
-            </div>
+  <section id="evidence" class="section-shell apple-container">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">图表证据</h2>
+        <p>证据卡应该看起来像正文的一部分，而不是额外附带的素材仓库。</p>
+      </div>
+    </div>
+    <div class="evidence-grid">
+      <article class="glass-card evidence-card">
+        <h3>Figure 1</h3>
+        <p>用一张关键图解释整体框架、信息流或方法拆分。</p>
+        <div class="placeholder-figure">Figure / Diagram Placeholder<br>写清编号、页码、作用与解读</div>
+      </article>
+      <article class="glass-card evidence-card">
+        <h3>Table 1</h3>
+        <p>主结果表应和 baseline、指标、结论绑定，而不是只说“效果更好”。</p>
+        <div class="placeholder-figure">Result Table Placeholder<br>突出关键数字与支持的论点</div>
+      </article>
+      <article class="glass-card evidence-card">
+        <h3>Appendix / Setup</h3>
+        <p>如果附录给了 prompt、超参数或实现细节，要在实验设计处系统整理出来。</p>
+        <div class="placeholder-figure">Appendix Evidence Placeholder<br>补复现关键信息，不要高层带过</div>
+      </article>
+    </div>
+  </section>
 
-            <div class="mb-10">
-                <h3 class="text-xl font-bold mb-4">复现核心参数与设计细则 (Table 1)</h3>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-sm text-left border-collapse">
-                        <thead class="bg-gray-100">
-                            <tr>
-                                <th class="p-3 border">指标</th>
-                                <th class="p-3 border">统计值</th>
-                                <th class="p-3 border">备注</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td class="p-3 border">上下文总数 (Contexts)</td>
-                                <td class="p-3 border">500</td>
-                                <td class="p-3 border">分布于 4 大类 18 小类</td>
-                            </tr>
-                            <tr>
-                                <td class="p-3 border">任务总数 (Tasks)</td>
-                                <td class="p-3 border">1,899</td>
-                                <td class="p-3 border">平均每个 Context 3.8 个任务</td>
-                            </tr>
-                            <tr>
-                                <td class="p-3 border">验证准则 (Rubrics)</td>
-                                <td class="p-3 border">31,607</td>
-                                <td class="p-3 border">平均每个任务 16.6 个 Rubrics</td>
-                            </tr>
-                            <tr>
-                                <td class="p-3 border">最大输入长度</td>
-                                <td class="p-3 border">65,000 tokens</td>
-                                <td class="p-3 border">挑战长文本处理与推理</td>
-                            </tr>
-                            <tr>
-                                <td class="p-3 border">验证器 (Verifier)</td>
-                                <td class="p-3 border">GPT-5.1</td>
-                                <td class="p-3 border">基于二元判别的 LM-as-a-judge</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+  <section id="review" class="section-shell apple-container">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">评论</h2>
+        <p>评论区应当有立场、有证据、有保留意见，不是礼貌复述作者贡献。</p>
+      </div>
+    </div>
+    <article class="glass-card review-note">
+      <h3>Reviewer Note</h3>
+      <p>一个好的评论区通常会同时包含三类信息：</p>
+      <ul>
+        <li>这篇论文真正站住脚的贡献是什么。</li>
+        <li>公开材料里哪些细节仍然没给够，导致严格复现仍有门槛。</li>
+        <li>如果把它放进更大的方法谱系，它最像 prerequisite、core、contrast 还是 extension。</li>
+      </ul>
+    </article>
+  </section>
 
-            <p class="italic text-gray-500 text-sm">注：构建每个上下文及其任务平均耗费专家 20 小时。51.1%
-                的任务是顺序进行的（Multi-turn），后一个任务依赖前一个任务的解决。</p>
-        </div>
-    </section>
-
-    <!-- 4. 实验结果及核心结论 -->
-    <section class="py-16 bg-gray-900 text-white">
-        <div class="apple-container">
-            <h2 class="section-title text-white">4. 实验结果：Frontier Models 的集体滑铁卢</h2>
-
-            <!-- Result Table Placeholder -->
-            <div class="glass-card bg-gray-800 p-8 border-gray-700 mb-12">
-                <h3 class="text-xl font-semibold mb-6">核心性能对比 (Table 2)</h3>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-center text-sm">
-                        <thead>
-                            <tr class="text-gray-400 border-b border-gray-700">
-                                <th class="p-4 text-left">模型名称</th>
-                                <th class="p-4">总体 (Overall)</th>
-                                <th class="p-4">领域知识推理</th>
-                                <th class="p-4">规则应用</th>
-                                <th class="p-4">经验发现 (最难)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr class="border-b border-gray-700 font-bold text-blue-400">
-                                <td class="p-4 text-left">GPT-5.1 (High Effort)</td>
-                                <td class="p-4">23.7%</td>
-                                <td class="p-4">25.3%</td>
-                                <td class="p-4">23.7%</td>
-                                <td class="p-4">18.1%</td>
-                            </tr>
-                            <tr class="border-b border-gray-700 text-gray-300">
-                                <td class="p-4 text-left">Claude Opus 4.5</td>
-                                <td class="p-4">21.1%</td>
-                                <td class="p-4">23.7%</td>
-                                <td class="p-4">19.0%</td>
-                                <td class="p-4">15.1%</td>
-                            </tr>
-                            <tr class="border-b border-gray-700 text-gray-300">
-                                <td class="p-4 text-left">OpenAI o3 (High)</td>
-                                <td class="p-4">17.8%</td>
-                                <td class="p-4">18.0%</td>
-                                <td class="p-4">17.6%</td>
-                                <td class="p-4">13.7%</td>
-                            </tr>
-                            <tr class="border-b border-gray-700 text-gray-300">
-                                <td class="p-4 text-left">Hunyuan 2.0 / Kimi K2</td>
-                                <td class="p-4">~17.4%</td>
-                                <td class="p-4">~18.5%</td>
-                                <td class="p-4">~17.2%</td>
-                                <td class="p-4">~10.5%</td>
-                            </tr>
-                            <tr class="text-gray-500">
-                                <td class="p-4 text-left">DeepSeek V3.2 / Doubao 1.6</td>
-                                <td class="p-4">~13.3%</td>
-                                <td class="p-4">~13.6%</td>
-                                <td class="p-4">~13.8%</td>
-                                <td class="p-4">~8.5%</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div class="grid md:grid-cols-3 gap-8">
-                <div class="p-6 bg-gray-800 rounded-2xl">
-                    <h4 class="font-bold mb-2">① 低解决率</h4>
-                    <p class="text-sm text-gray-400">平均解决率仅为 \( 17.2\% \)，即便最强的 GPT-5.1 也不到四分之一。说明模型尚未掌握有效的上下文学习。</p>
-                </div>
-                <div class="p-6 bg-gray-800 rounded-2xl">
-                    <h4 class="font-bold mb-2">② 归纳推理之痛</h4>
-                    <p class="text-sm text-gray-400">Category 4 (经验发现) 的得分远低于前三类，反映了从数据中归纳物理规律对当前模型极具挑战。</p>
-                </div>
-                <div class="p-6 bg-gray-800 rounded-2xl">
-                    <h4 class="font-bold mb-2">③ 长度压制</h4>
-                    <p class="text-sm text-gray-400">随着输入长度增加，所有模型性能均出现明显退化。长文本不仅考研记忆，更考研在海量干扰下的精准内化。</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- 5. 评论与锐评 -->
-    <section class="py-16 apple-container">
-        <h2 class="section-title">5. 深度锐评：AI Researcher 的视角</h2>
-        <div class="glass-card p-10 border-l-8 border-black">
-            <div class="flex items-start gap-6">
-                <div
-                    class="w-16 h-16 bg-black text-white rounded-full flex items-center justify-center font-bold shrink-0">
-                    Reviewer</div>
-                <div>
-                    <h3 class="text-2xl font-bold mb-4">这篇工作的意义远超其分数</h3>
-                    <p class="mb-6 text-gray-700 leading-relaxed">
-                        作为一名长期关注 LLM 演进的研究者，我认为 CL-bench 填补了一个关键空白。我们过去总是混淆 <span class="italic">Retrieval
-                            (检索)</span>、<span class="italic">ICL (少样本模仿)</span> 与真正的 <span class="italic">Learning
-                            (学习)</span>。
-                    </p>
-                    <div class="space-y-4">
-                        <div class="flex gap-4">
-                            <span class="text-green-600 font-bold">PROS:</span>
-                            <p class="text-sm text-gray-600">极高的构建成本带来了极高的测试质量。Rubric-based
-                                评估比传统的模糊评分靠谱得多。它揭示了一个残酷事实：增加思维链（Reasoning Effort）虽然有提升，但在上下文学习面前只能算是“隔靴搔痒”。</p>
-                        </div>
-                        <div class="flex gap-4">
-                            <span class="text-red-600 font-bold">CONS:</span>
-                            <p class="text-sm text-gray-600">虽然覆盖了 18 个子类，但本质上还是基于文本的“内化”。未来的 CL
-                                应该涉及到多模态（看视频学修理）和交互式学习（向人类提问来修正理解）。此外，基准目前是静态的，容易受到 Data Contamination 的长期威胁。</p>
-                        </div>
-                        <div class="flex gap-4">
-                            <span class="text-purple-600 font-bold">NEXT:</span>
-                            <p class="text-sm text-gray-600">模型不仅要学会 Context，还要学会“遗忘”冲突的旧知识。这是通往 AGI Agent 的必经之路。</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- One More Thing -->
-    <section class="py-16 bg-white overflow-hidden">
-        <div class="apple-container relative">
-            <div class="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 bg-blue-100 rounded-full blur-3xl opacity-50">
-            </div>
-            <h2 class="section-title text-left">One More Thing...</h2>
-            <div class="flex flex-col md:flex-row gap-10 items-center">
-                <div class="md:w-1/2">
-                    <p class="text-xl text-gray-600 mb-6">
-                        论文中提到的“Context Misuse” (上下文滥用) 是失败的主因，占比超过 60%。这意味着模型看到了信息，但却“用错了”。
-                    </p>
-                    <p class="text-gray-500">
-                        有趣的是，GPT-5.2 的表现竟然在某些指标上逊于 GPT-5.1，这可能暗示了模型在复杂上下文中的一致性（Coherence）管理上遇到了规模扩展的瓶颈。
-                    </p>
-                </div>
-                <div class="md:w-1/2 glass-card p-6 bg-black text-white">
-                    <h4 class="font-mono text-sm text-gray-400 mb-4">// Error Analysis Snippet</h4>
-                    <ul class="font-mono text-xs space-y-2">
-                        <li class="text-red-400">- Context Ignored: 55-66%</li>
-                        <li class="text-yellow-400">- Format Error: 33-45%</li>
-                        <li class="text-green-400">+ Success Rate: ~17% (Needs Improvement)</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <footer class="py-12 text-center text-gray-400 text-sm border-t">
-        <p>© 2026 PaperReading Room - Codex-first 学术报告参考样式</p>
-    </footer>
-
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            renderMathInElement(document.body, {
-                delimiters: [
-                    { left: '$$', right: '$$', display: true },
-                    { left: '$', right: '$', display: false },
-                    { left: '\\(', right: '\\)', display: false },
-                    { left: '\\[', right: '\\]', display: true }
-                ],
-                throwOnError: false
-            });
-        });
-    </script>
+  <section class="section-shell apple-container" style="padding-bottom: 56px;">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">结尾收束区</h2>
+        <p>最后收束时，适合分别给出“最重要的事实”“最重要的保留意见”“最值得带走的启发”。</p>
+      </div>
+    </div>
+    <div class="summary-grid">
+      <article class="glass-card summary-card">
+        <h3>最重要的事实</h3>
+        <p>帮助读者快速回忆方法、结果和证据链最硬的部分。</p>
+      </article>
+      <article class="glass-card summary-card">
+        <h3>最重要的保留意见</h3>
+        <p>提醒哪些 claim 仍然依赖未公开细节、附录缺失或实验外推。</p>
+      </article>
+      <article class="glass-card summary-card">
+        <h3>One More Thing</h3>
+        <p>留下方法谱系、阅读路线或实现启发，让页面有真正的“作品收束感”。</p>
+      </article>
+    </div>
+  </section>
 </body>
-
 </html>

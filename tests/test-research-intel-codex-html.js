@@ -522,6 +522,9 @@ test('buildCodexHtmlPrompt encodes the hard requirements for direct Codex genera
   assert.match(prompt, /所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文/);
   assert.match(prompt, /Research Product Page/);
   assert.match(prompt, /页面要有“作品感”/);
+  assert.match(prompt, /暖色研究专题页/);
+  assert.match(prompt, /冷色研究简报/);
+  assert.match(prompt, /不要把正文默认设成 opacity: 0/);
   assert.match(prompt, /研究动机/);
   assert.match(prompt, /实验方法与实验设计/);
   assert.match(prompt, /Rebuttal/);
@@ -548,6 +551,10 @@ test('buildCodexInlineHtmlPrompt forces raw html-only output', () => {
   assert.match(prompt, /苹果官网设计美学/);
   assert.match(prompt, /研究产品页/);
   assert.match(prompt, /手写 CSS/);
+  assert.match(prompt, /暖色研究专题页/);
+  assert.match(prompt, /冷色研究简报/);
+  assert.match(prompt, /指标卡可以有，但只能作为概览信息带的一部分/);
+  assert.match(prompt, /不要把正文默认设成 opacity: 0/);
   assert.match(prompt, /attached images 数量：3/);
   assert.match(prompt, /模板视觉语言参考/);
   assert.match(prompt, /可见标题（h1\/h2\/h3）中必须直接出现这些字样/);
@@ -741,7 +748,7 @@ test('buildEvidenceManifest annotates evidence pages with roles, tags, and compa
   assert.ok(manifest[1].signalTags.includes('hyperparameter'));
 });
 
-test('buildDeterministicFallbackHtml produces a validation-safe page without placeholder markers', () => {
+test('buildDeterministicFallbackHtml preserves structure but is flagged as a degraded fallback page', () => {
   const html = buildDeterministicFallbackHtml({
     meta: {
       title: 'SPIRAL',
@@ -773,8 +780,44 @@ test('buildDeterministicFallbackHtml produces a validation-safe page without pla
   assert.doesNotMatch(html, /todo|placeholder/i);
 
   const quality = inspectHtmlQuality(html, []);
+  assert.equal(quality.ok, false);
   assert.equal(quality.placeholderMarkers.length, 0);
   assert.deepEqual(quality.missingMarkers, []);
+  assert.ok(quality.issues.some(issue => issue.code === 'degraded_fallback_page'));
+});
+
+test('inspectHtmlQuality rejects pages that hide primary content behind scroll-triggered reveal animations', () => {
+  const html = [
+    '<!DOCTYPE html>',
+    '<html lang="zh-CN">',
+    '<head>',
+    '<style>',
+    '.fade-up { opacity: 0; transform: translateY(18px); transition: opacity .6s ease, transform .6s ease; }',
+    '.fade-up.is-visible { opacity: 1; transform: translateY(0); }',
+    '</style>',
+    '</head>',
+    '<body>',
+    '<section class="fade-up"><h2>研究动机</h2><p>动机内容。</p></section>',
+    '<section class="fade-up"><h2>数学表示及建模</h2><p>数学内容。</p></section>',
+    '<section class="fade-up"><h2>实验方法与实验设计</h2><p>实验设计。</p></section>',
+    '<section class="fade-up"><h2>实验结果及核心结论</h2><p>结果内容。</p></section>',
+    '<section class="fade-up"><h2>评论</h2><p>评论内容。</p></section>',
+    '<section class="fade-up"><h2>Rebuttal 过程（如果有）</h2><p>无。</p></section>',
+    '<section class="fade-up"><h2>One More Thing</h2><p>补充内容。</p></section>',
+    '<script>',
+    'const fades = document.querySelectorAll(".fade-up");',
+    'const observer = new IntersectionObserver((entries) => {',
+    '  entries.forEach(entry => { if (entry.isIntersecting) entry.target.classList.add("is-visible"); });',
+    '});',
+    'fades.forEach(el => observer.observe(el));',
+    '</script>',
+    '</body>',
+    '</html>'
+  ].join('');
+
+  const quality = inspectHtmlQuality(html, []);
+  assert.equal(quality.ok, false);
+  assert.ok(quality.issues.some(issue => issue.code === 'scroll_gated_primary_content'));
 });
 
 test('cleanHtmlResponse strips code fences and leading chatter', () => {
@@ -907,11 +950,49 @@ test('captureValidationScreenshot falls back to viewport capture when full-page 
     }
   };
 
-  const result = await captureValidationScreenshot(fakePage, '/tmp/out.png');
+  const result = await captureValidationScreenshot(fakePage, '/tmp/out.png', {
+    getPageMetrics: async () => ({
+      viewportWidth: 1215,
+      scrollHeight: 14948
+    }),
+    getPngDimensions: () => null
+  });
   assert.equal(result.mode, 'viewport');
   assert.equal(calls.length, 2);
   assert.equal(calls[0].fullPage, true);
   assert.equal(calls[1].fullPage, false);
+});
+
+test('captureValidationScreenshot re-captures with an exact clip when full-page dimensions drift from DOM metrics', async () => {
+  const calls = [];
+  const fakePage = {
+    async screenshot(options) {
+      calls.push(options);
+    }
+  };
+
+  const result = await captureValidationScreenshot(fakePage, '/tmp/out.png', {
+    getPageMetrics: async () => ({
+      viewportWidth: 1215,
+      scrollHeight: 14948
+    }),
+    getPngDimensions: () => ({
+      width: 1215,
+      height: 24455
+    })
+  });
+
+  assert.equal(result.mode, 'full-page-clip');
+  assert.match(result.warning, /dimensions mismatched DOM metrics/i);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].fullPage, true);
+  assert.deepEqual(calls[1].clip, {
+    x: 0,
+    y: 0,
+    width: 1215,
+    height: 14948
+  });
+  assert.equal(calls[1].captureBeyondViewport, true);
 });
 
 test('inlineKatexAssetsInHtml inserts script bodies verbatim without expanding replacement tokens', () => {

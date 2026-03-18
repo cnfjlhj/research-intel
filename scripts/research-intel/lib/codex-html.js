@@ -73,6 +73,17 @@ const REQUIRED_VISIBLE_HEADINGS = [
   'Rebuttal 过程（如果有）',
   'One More Thing'
 ];
+
+const DEGRADED_FALLBACK_PAGE_PATTERNS = [
+  /research intel fallback/i,
+  /deterministic research page/i,
+  /deterministic fallback/i
+];
+const VALIDATION_VIEWPORT = {
+  width: 1215,
+  height: 900,
+  deviceScaleFactor: 1
+};
 const DEFAULT_REPAIR_PROMPT_HTML_PREVIEW_MAX_CHARS = 160000;
 const REPAIR_PROMPT_HTML_PREVIEW_TRUNCATION_NOTE = '<!-- current html preview truncated for repair prompt; read the current HTML file path above for the full document -->';
 
@@ -179,11 +190,15 @@ function buildTemplateDesignReference(templateHtml = '') {
   return [
     '模板视觉语言参考（只借鉴风格，不复用原论文内容）：',
     '- 整体方向是苹果官网式长页面叙事，而不是普通博客文章或简单白底报告页。',
+    '- 整体气质更接近暖色研究专题页 / editorial feature，而不是冷色研究简报、KPI 面板或 dashboard 风。',
     `- ${hasHeroGradient ? '保留' : '建议使用'} 大幅 hero 区、柔和渐变背景和明显的首屏叙事感。`,
     `- ${hasGlassCard ? '保留' : '建议使用'} 半透明/玻璃感信息卡片，但不要整页都堆成同一种卡片。`,
     `- ${hasWideSections ? '保留' : '建议使用'} 宽幅留白、清晰分区、桌面端双栏或多栏与移动端单栏的自适应切换。`,
     `- ${hasAppleVars ? '保留' : '建议使用'} 苹果系浅色中性背景、克制的高亮色、细腻阴影与圆角。`,
+    '- 推荐使用暖白、米色、浅金、灰绿等低饱和暖中性色建立氛围，避免大面积冷蓝灰把页面做成研究周报感。',
     '- 页面需要有强层次感：hero、概览信息带、正文分区、证据卡、表格区、锐评区、结尾收束区。',
+    '- 首屏不只是堆信息；要先把读者拉进论文问题，再用概览信息带承接关键事实与阅读线索。',
+    '- 指标卡可以有，但只能作为概览信息带的一部分，不能让整页退化成四格数字简报。',
     '- 即使不能使用 Tailwind CDN 或 Google Fonts，也要靠手写 CSS 维持精致感，不能退化成朴素文档页。',
     '- 避免“从头到尾只有一列堆叠白卡片”的保守布局，至少要出现几种不同的模块形态。'
   ].join('\n');
@@ -539,6 +554,11 @@ function buildCodexHtmlPrompt({
     '5. 除公式和必要术语外，尽量使用中文。',
     '5.1 所有面向读者的导航、按钮、说明、标签、卡片标题都必须使用中文；不要出现 “Research Product Page”“Paper Overview”“Hero”“Overview” 这类英文栏目名。',
     '6. 页面要有“作品感”，不能退化成普通单栏摘要页或一串机械堆叠的白色卡片。',
+    '6.1 整体气质优先参考暖色研究专题页，而不是冷色研究简报、KPI 面板或 dashboard 风。',
+    '6.2 首屏必须先建立叙事抓手：强标题、简短导语、为什么值得读、读完应带走什么，而不是一上来只堆一排数字卡片。',
+    '6.3 指标卡可以出现，但只能作为概览信息带的一部分，不能主导整页视觉。',
+    '6.4 不要把正文默认设成 opacity: 0，也不要依赖 IntersectionObserver、滚动触发 reveal 或进入视口后才显示的动画来呈现主要内容。',
+    '6.5 如果需要动画，主要内容在初始渲染时也必须可见；动画只能锦上添花，不能决定正文是否可读。',
     '7. 至少包含这些视觉层次中的大部分：沉浸式 hero、概览信息带、目录/导航、双栏或多栏内容区、figure/table 证据卡、评议区、结尾收束区。',
     '8. 可见标题（h1/h2/h3）中必须直接出现这些字样，可以在前后加编号或副标题，但不能替换这些词：',
     ...REQUIRED_VISIBLE_HEADINGS.map(item => `   - ${item}`),
@@ -563,6 +583,7 @@ function buildCodexHtmlPrompt({
     '额外提醒：',
     '- 读者读完这个页面后，应该能把握论文 90% 左右的核心内容与复现关键，而不是只记住一句结论。',
     '- 页面应当“像一个精致的研究产品页”，而不是“模型把材料塞进几个卡片里”。',
+    '- 视觉语言更接近暖色 editorial feature，而不是冷色研究简报；允许有概览卡，但不能失去叙事开场和模块变化。',
     '- 数学、实验、图表、评论这几个部分不能失衡。',
     '',
     'attached images 列表：',
@@ -667,6 +688,11 @@ function buildCodexInlineHtmlPrompt({
     '- 块级公式统一使用 $$ ... $$。',
     '- 必须覆盖：论文概览、研究动机、核心想法与方法总览、数学表示及建模、实验方法与实验设计、实验结果及核心结论、你的评论、Rebuttal 过程（如果有）、One More Thing。',
     '- 页面必须看起来像经过认真设计的研究产品页，而不是普通 markdown 长文或“从头到尾一列白卡片”的保守排版。',
+    '- 整体气质优先参考暖色研究专题页 / editorial feature，避免滑向冷色研究简报、KPI 面板或 dashboard 风。',
+    '- 首屏需要像真正的专题页开场：强标题、导语、值得读的理由、读后收获，而不是一上来只摆一组数字卡片。',
+    '- 指标卡可以有，但只能作为概览信息带的一部分，不能主导整页视觉语言。',
+    '- 不要把正文默认设成 opacity: 0，也不要依赖 IntersectionObserver、滚动触发 reveal 或进入视口后才显示的动画来呈现主要内容。',
+    '- 如果你使用动画，正文和关键证据块在初始渲染时也必须可见；不能让全页截图或未滚动状态下的页面大片空白。',
     '- 至少要出现这些视觉模块中的大部分：沉浸式 hero、概览信息带、目录或快速导航、双栏/多栏正文区、figure/table 证据卡、reviewer note / rebuttal 区、结尾总结区。',
     '- 即使不能使用 Tailwind CDN 或 Google Fonts，也必须靠手写 CSS 做出高级感、节奏感和层次感。',
     '- 可见标题（h1/h2/h3）中必须直接出现这些字样，可以加编号或副标题，但这些短语本身必须原样出现：',
@@ -1508,8 +1534,25 @@ function replaceFigurePlaceholdersWithEvidence(html, evidencePages = []) {
 
 function inspectHtmlQuality(html, evidencePages = []) {
   const issues = [];
-  const placeholderMarkers = findPlaceholderMarkers(html);
-  const missingMarkers = findMissingVisibleHeadings(html);
+  const source = String(html || '');
+  const placeholderMarkers = findPlaceholderMarkers(source);
+  const missingMarkers = findMissingVisibleHeadings(source);
+  const degradedFallbackMarkers = DEGRADED_FALLBACK_PAGE_PATTERNS
+    .filter(pattern => pattern.test(source))
+    .map(pattern => pattern.source);
+  const fadeUpCount = (source.match(/\bfade-up\b/g) || []).length;
+  const hidesContentUntilReveal =
+    /opacity\s*:\s*0/i.test(source)
+    && /IntersectionObserver/i.test(source)
+    && fadeUpCount >= 4;
+
+  if (degradedFallbackMarkers.length > 0) {
+    issues.push({
+      code: 'degraded_fallback_page',
+      markers: degradedFallbackMarkers
+    });
+  }
+
   if (placeholderMarkers.length > 0) {
     issues.push({
       code: 'placeholder_marker',
@@ -1524,8 +1567,15 @@ function inspectHtmlQuality(html, evidencePages = []) {
     });
   }
 
-  const hasPlaceholderFigure = /\[(Figure|图|Table|表)\s*[0-9]+[:：][^\]]+\]/i.test(String(html || ''));
-  const hasInlineEvidence = /data-research-intel-inline-evidence/i.test(String(html || ''));
+  if (hidesContentUntilReveal) {
+    issues.push({
+      code: 'scroll_gated_primary_content',
+      message: 'HTML 把主要内容默认隐藏在滚动 / observer 动画后，导致未滚动或全页截图时正文大面积不可见。'
+    });
+  }
+
+  const hasPlaceholderFigure = /\[(Figure|图|Table|表)\s*[0-9]+[:：][^\]]+\]/i.test(source);
+  const hasInlineEvidence = /data-research-intel-inline-evidence/i.test(source);
   if (hasPlaceholderFigure && (evidencePages || []).length > 0 && !hasInlineEvidence) {
     issues.push({
       code: 'weak_figure_grounding',
@@ -2112,13 +2162,87 @@ async function makeHtmlStandalone(htmlPath) {
   fs.writeFileSync(htmlPath, standaloneHtml, 'utf8');
 }
 
-async function captureValidationScreenshot(page, screenshotPath) {
+async function getValidationScreenshotMetrics(page) {
+  return page.evaluate(() => ({
+    viewportWidth: Math.max(
+      1,
+      document.documentElement?.clientWidth || 0,
+      window.innerWidth || 0
+    ),
+    scrollHeight: Math.max(
+      1,
+      document.body?.scrollHeight || 0,
+      document.documentElement?.scrollHeight || 0,
+      document.body?.clientHeight || 0,
+      document.documentElement?.clientHeight || 0,
+      window.innerHeight || 0
+    )
+  }));
+}
+
+function readPngDimensions(pngPath, { readFileSync = fs.readFileSync } = {}) {
+  const buffer = readFileSync(pngPath);
+  if (!Buffer.isBuffer(buffer) || buffer.length < 24) {
+    return null;
+  }
+  const pngSignature = '89504e470d0a1a0a';
+  if (buffer.subarray(0, 8).toString('hex') !== pngSignature) {
+    return null;
+  }
+  if (buffer.toString('ascii', 12, 16) !== 'IHDR') {
+    return null;
+  }
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20)
+  };
+}
+
+function screenshotNeedsExactClip(metrics, dimensions) {
+  if (!metrics || !dimensions) {
+    return false;
+  }
+  return Math.abs(dimensions.width - metrics.viewportWidth) > 2
+    || Math.abs(dimensions.height - metrics.scrollHeight) > 2;
+}
+
+async function captureValidationScreenshot(page, screenshotPath, {
+  getPageMetrics = getValidationScreenshotMetrics,
+  getPngDimensions = readPngDimensions
+} = {}) {
+  const pageMetrics = await getPageMetrics(page);
   try {
     await page.screenshot({
       path: screenshotPath,
       fullPage: true,
       type: 'png'
     });
+    const screenshotDimensions = getPngDimensions(screenshotPath);
+    if (screenshotNeedsExactClip(pageMetrics, screenshotDimensions)) {
+      const clip = {
+        x: 0,
+        y: 0,
+        width: Math.max(1, Math.ceil(pageMetrics.viewportWidth)),
+        height: Math.max(1, Math.ceil(pageMetrics.scrollHeight))
+      };
+      try {
+        await page.screenshot({
+          path: screenshotPath,
+          type: 'png',
+          clip,
+          captureBeyondViewport: true
+        });
+        return {
+          mode: 'full-page-clip',
+          warning: `full-page screenshot dimensions mismatched DOM metrics (${screenshotDimensions.width}x${screenshotDimensions.height} vs ${clip.width}x${clip.height}); recaptured with exact clip`
+        };
+      } catch (clipError) {
+        return {
+          mode: 'full-page',
+          warning: `full-page screenshot dimensions mismatched DOM metrics (${screenshotDimensions.width}x${screenshotDimensions.height} vs ${clip.width}x${clip.height}); exact clip recapture failed: ${clipError?.message || clipError}`
+        };
+      }
+    }
     return {
       mode: 'full-page',
       warning: ''
@@ -2604,6 +2728,7 @@ async function validateHtmlWithBrowser({ htmlPath, screenshotPath, evidencePages
   });
 
   const page = await browser.newPage();
+  await page.setViewport(VALIDATION_VIEWPORT);
   const consoleErrors = [];
   const consoleWarnings = [];
   const requestFailures = [];
