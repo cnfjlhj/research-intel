@@ -620,8 +620,8 @@ function summarizeHeartbeatState(runtimePaths, currentRun, heartbeat) {
     ...(heartbeat || {})
   };
   const monitorPidFileValue = readText(runtimePaths.monitorPidPath, '').trim();
-  const monitorPid = Number(monitorPidFileValue || currentRun?.monitorPid || 0);
-  const monitorAlive = isPidRunning(monitorPid);
+  const monitorPid = monitorPidFileValue ? Number(monitorPidFileValue) : 0;
+  const monitorAlive = monitorPid > 0 && isPidRunning(monitorPid);
   const checkedAtMs = new Date(nextHeartbeat.checkedAt || '').getTime();
   const freshnessExpired = !Number.isFinite(checkedAtMs)
     || (Date.now() - checkedAtMs) > (30 * 60 * 1000);
@@ -1809,6 +1809,7 @@ module.exports = {
   getRuntimePaths,
   loadSettingsState,
   loadRuntimeState,
+  summarizeHeartbeatState,
   serializeJsonl,
   upsertJsonlRecord,
   deleteJsonlRecord

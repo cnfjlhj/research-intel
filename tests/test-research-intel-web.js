@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { createResearchIntelWebApp } = require('../scripts/research-intel/lib/web');
+const { createResearchIntelWebApp, summarizeHeartbeatState } = require('../scripts/research-intel/lib/web');
 
 function writeText(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -615,6 +615,39 @@ test('research-intel web app allows manual rerun when runtime is stale instead o
     assert.equal(run.headers.get('location'), '/research-intel/?triggered=1');
   } finally {
     await server.close();
+  }
+});
+
+test('summarizeHeartbeatState ignores stale current-run monitorPid when the pid file is absent', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-web-runtime-'));
+  const runtimePaths = {
+    monitorPidPath: path.join(runtimeDir, 'heartbeat-monitor.pid')
+  };
+  const originalKill = process.kill;
+  process.kill = pid => {
+    if (pid === 321) {
+      return true;
+    }
+    const error = new Error('no such process');
+    error.code = 'ESRCH';
+    throw error;
+  };
+
+  try {
+    const heartbeat = summarizeHeartbeatState(
+      runtimePaths,
+      {
+        status: 'completed',
+        monitorPid: 321
+      },
+      {
+        checkedAt: new Date().toISOString()
+      }
+    );
+    assert.equal(heartbeat.monitorAlive, false);
+    assert.equal(heartbeat.historical, true);
+  } finally {
+    process.kill = originalKill;
   }
 });
 
