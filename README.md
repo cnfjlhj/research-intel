@@ -1,13 +1,17 @@
-# Research Intel
+<p align="center">
+  <img src="docs/assets/readme/hero-banner.svg" width="100%" alt="Research Intel" />
+</p>
+
+<p align="center">
+  <a href="#快速开始"><strong>快速开始</strong></a> · <a href="docs/部署说明.md">部署说明</a> · <a href="https://github.com/cnfjlhj/research-intel/releases/tag/v0.1.0">v0.1.0</a>
+</p>
 
 每天早上醒来，Telegram 上已经躺好了 3–8 篇和你研究方向最相关的论文，每篇都有一份完整的 HTML 档案——不是摘要，是从 PDF 原文拆出来的结构化笔记，随时能回头查。
 
 这就是 Research Intel 在干的事。
 
 <p align="center">
-  <img src="docs/assets/readme/hero-ui.jpg" alt="Research Intel 实际运行界面" width="820" />
-  <br/>
-  <sub>左：控制台 / 右：今日论文页。真实运行截图，不是设计稿。</sub>
+  <img src="docs/assets/readme/hero-ui.jpg" alt="Research Intel 实际运行界面" width="100%" />
 </p>
 
 ---
