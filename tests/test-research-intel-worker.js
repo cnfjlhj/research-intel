@@ -57,6 +57,13 @@ test('buildWorkerPrompt includes the required context, deliverables, and status 
   assert.match(prompt, /paper\.pdf 是唯一真相来源/);
   assert.match(prompt, /独立 paper workspace、独立 Codex tmux session/);
   assert.match(prompt, /fresh generation attempt/);
+  assert.match(prompt, /禁止任何“应急发布\/保底发布”策略/);
+  assert.match(prompt, /manual_backup_rebuild/);
+  assert.match(prompt, /不得改用昨天的 backup、历史 shortlist、unsent papers、manual shortlist/);
+  assert.match(prompt, /拿不到，就必须把运行标记为 failed 或 cancelled/);
+  assert.match(prompt, /不要发送 Telegram，不要提交 records/);
+  assert.match(prompt, /必须运行 node .*verify-daily\.js --date 2026-03-14 --disable-notification/);
+  assert.match(prompt, /出现 manual_backup_rebuild、backup_rebuild、history_rebuild、fallback 等来源标记，视为发布失败/);
   assert.doesNotMatch(prompt, /优先修补已有 HTML/);
 });
 

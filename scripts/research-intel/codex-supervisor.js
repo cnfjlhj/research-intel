@@ -205,7 +205,45 @@ function isPidRunning(pid) {
   }
 }
 
-function ensureMonitorProcess({
+function shouldReuseExistingMonitor({ existingPid, sessionName, monitorState }) {
+  if (!isPidRunning(existingPid)) {
+    return false;
+  }
+  return String(monitorState?.sessionName || '') === String(sessionName || '');
+}
+
+async function stopDetachedProcess(pid, timeoutMs = 5000) {
+  if (!isPidRunning(pid)) {
+    return;
+  }
+
+  try {
+    process.kill(Number(pid), 'SIGTERM');
+  } catch (error) {
+    if (error.code === 'ESRCH') {
+      return;
+    }
+    throw error;
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidRunning(pid)) {
+      return;
+    }
+    await sleep(100);
+  }
+
+  try {
+    process.kill(Number(pid), 'SIGKILL');
+  } catch (error) {
+    if (error.code !== 'ESRCH') {
+      throw error;
+    }
+  }
+}
+
+async function ensureMonitorProcess({
   sessionName,
   baseDir,
   runtimePaths,
@@ -215,11 +253,26 @@ function ensureMonitorProcess({
   const existingPid = fs.existsSync(runtimePaths.monitorPidPath)
     ? Number(fs.readFileSync(runtimePaths.monitorPidPath, 'utf8').trim())
     : 0;
-  if (isPidRunning(existingPid)) {
+  const existingMonitorState = readJsonIfExists(runtimePaths.monitorStatePath) || {};
+  if (shouldReuseExistingMonitor({
+    existingPid,
+    sessionName,
+    monitorState: existingMonitorState
+  })) {
     return {
       pid: existingPid,
       started: false
     };
+  }
+
+  if (isPidRunning(existingPid)) {
+    await stopDetachedProcess(existingPid);
+  }
+
+  try {
+    fs.rmSync(runtimePaths.monitorPidPath, { force: true });
+  } catch (error) {
+    void error;
   }
 
   const logPath = path.join(runtimePaths.logsDir, `${sessionName}.monitor.log`);
@@ -371,7 +424,13 @@ async function main() {
   }, null, 2));
 }
 
-main().catch(error => {
-  console.error(error.stack || error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error.stack || error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  shouldReuseExistingMonitor
+};

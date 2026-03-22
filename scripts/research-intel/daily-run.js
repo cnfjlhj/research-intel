@@ -10,15 +10,14 @@ const { MinuteRateLimiter } = require('./lib/chat-html');
 const { applyDailyCuration, curateDailySelection } = require('./lib/curation');
 const {
   buildEvidenceManifest,
+  buildBodyFirstPdfContext,
   buildCodexInlineHtmlPrompt,
   cleanHtmlResponse,
   injectEvidenceGallery,
   makeHtmlStandalone,
   replaceFigurePlaceholdersWithEvidence,
-  renderPdfPagesToImages,
   buildCodexHtmlTmuxRunPaths,
   runCodexHtmlGeneration,
-  selectEvidencePageImages,
   validateHtmlWithBrowser
 } = require('./lib/codex-html');
 const { normalizeArxivId, normalizeTitle, dedupePapers, scorePaper } = require('./lib/core');
@@ -72,6 +71,11 @@ const DEFAULT_HTML_TEXT_PREVIEW_LIMIT = 16000;
 const DEFAULT_HTML_EVIDENCE_IMAGE_LIMIT = 6;
 const FAST_SMOKE_HTML_EVIDENCE_IMAGE_LIMIT = 4;
 const DEFAULT_HTML_GENERATION_MAX_ATTEMPTS = 2;
+const RELEASE_REQUIRED_GENERATION_SOURCE = 'codex-tmux-pdf-first-single-chain';
+const RELEASE_BLOCKED_GENERATION_SOURCE_PATTERNS = [
+  /fallback/i,
+  /deterministic/i
+];
 
 function parseArgs(argv) {
   const options = {
@@ -903,6 +907,62 @@ function buildAttemptFailureSummary(attemptResult) {
   return 'html generation attempt failed without a structured validation summary';
 }
 
+function fileExistsWithContent(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return false;
+  }
+  return String(fs.readFileSync(filePath, 'utf8')).trim().length > 0;
+}
+
+function inspectPaperArtifactReleaseReadiness(paper = {}) {
+  const issues = [];
+  const generationSource = String(paper.generationSource || '').trim();
+
+  if (generationSource !== RELEASE_REQUIRED_GENERATION_SOURCE) {
+    issues.push(`generation source must be ${RELEASE_REQUIRED_GENERATION_SOURCE}, got ${generationSource || '(empty)'}`);
+  }
+  if (RELEASE_BLOCKED_GENERATION_SOURCE_PATTERNS.some(pattern => pattern.test(generationSource))) {
+    issues.push(`blocked generation source detected: ${generationSource}`);
+  }
+  if (!fileExistsWithContent(paper.generationPromptPath)) {
+    issues.push(`missing generation prompt artifact: ${paper.generationPromptPath || '(empty)'}`);
+  }
+  if (!fileExistsWithContent(paper.codexFinalMessagePath)) {
+    issues.push(`missing codex final message artifact: ${paper.codexFinalMessagePath || '(empty)'}`);
+  }
+  if (!fileExistsWithContent(paper.initialHtmlPath)) {
+    issues.push(`missing initial html artifact: ${paper.initialHtmlPath || '(empty)'}`);
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues
+  };
+}
+
+function assertPaperArtifactReleaseReady(paper = {}) {
+  const readiness = inspectPaperArtifactReleaseReadiness(paper);
+  if (readiness.ok) {
+    return;
+  }
+  throw new Error(
+    `Paper artifact is not release-ready for ${paper.title || '(untitled)'}: ${readiness.issues.join(' | ')}`
+  );
+}
+
+function assertReleaseReadyArtifactSet(papers = []) {
+  const failures = [];
+  for (const paper of papers) {
+    const readiness = inspectPaperArtifactReleaseReadiness(paper);
+    if (!readiness.ok) {
+      failures.push(`${paper.title || '(untitled)'}: ${readiness.issues.join(' | ')}`);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`Release-ready artifact gate failed: ${failures.join(' || ')}`);
+  }
+}
+
 async function runPaperHtmlGenerationAttempt({
   paperDir,
   promptText,
@@ -1085,19 +1145,16 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     ...paper,
     pdfUrl: resolvedPdfUrl
   };
-  extractPdfText(paperPdfPath, paperTextPath);
-  const extractedText = fs.readFileSync(paperTextPath, 'utf8');
-  writeText(paperTextPreviewPath, truncateForLlm(extractedText, DEFAULT_HTML_TEXT_PREVIEW_LIMIT));
-  const pageImages = renderPdfPagesToImages({
+  const bodyFirstContext = buildBodyFirstPdfContext({
     pdfPath: paperPdfPath,
-    outputDir: pageImagesDir
-  });
-  const evidencePages = selectEvidencePageImages({
-    pdfPath: paperPdfPath,
-    pageImages,
-    textOutputDir: pageTextsDir,
+    pageImagesDir,
+    pageTextsDir,
     maxImages: resolveHtmlEvidenceImageLimit(options)
   });
+  const extractedText = bodyFirstContext.curatedText;
+  writeText(paperTextPath, `${extractedText}\n`);
+  writeText(paperTextPreviewPath, truncateForLlm(extractedText, DEFAULT_HTML_TEXT_PREVIEW_LIMIT));
+  const evidencePages = bodyFirstContext.evidencePages;
   const attachedPageImages = evidencePages.map(entry => entry.imagePath);
   const evidenceManifest = buildEvidenceManifest(evidencePages);
   writeJson(evidencePagesPath, evidenceManifest);
@@ -1396,7 +1453,7 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     htmlPath,
     pdfPath: paperPdfPath,
     metaPath: path.join(paperDir, 'paper_meta.json'),
-    pageImageCount: pageImages.length,
+    pageImageCount: evidencePages.length,
     attachedPageImageCount: attachedPageImages.length,
     evidencePagesPath,
     generationModel: selectedAttempt.generationModel,
@@ -1592,6 +1649,7 @@ async function main() {
       generatedPaper.dependencyCard = dependencyCardPayload;
       generatedPaper.sessionContextPath = path.join(runPaths.sessionContextsDir, sessionContextFilename);
       generatedPaper.recordSessionContextPath = path.join(recordPaths.sessionContextsDir, sessionContextFilename);
+      assertPaperArtifactReleaseReady(generatedPaper);
       artifactPapers.push(generatedPaper);
       dependencyCardIndex.set(generatedPaper.paperId, {
         paperId: generatedPaper.paperId,
@@ -1653,6 +1711,7 @@ async function main() {
   });
   const curatedArtifactPapers = applyDailyCuration(artifactPapers, dailyCuration, taxonomy)
     .slice(0, targetPaperCount);
+  assertReleaseReadyArtifactSet(curatedArtifactPapers);
   const acceptedTitles = new Set(curatedArtifactPapers.map(paper => normalizeTitle(paper.title)));
   const deferredFromMustRead = generationQueue.filter(paper => !acceptedTitles.has(normalizeTitle(paper.title)));
   const finalWatchlist = dedupeByTitle([
@@ -1932,6 +1991,7 @@ module.exports = {
   DEFAULT_HTML_GENERATION_MAX_ATTEMPTS,
   buildHtmlInputCostSignals,
   buildPaperHtmlAttemptPaths,
+  inspectPaperArtifactReleaseReadiness,
   parseArgs,
   desiredPaperCount,
   minimumArtifactCount,

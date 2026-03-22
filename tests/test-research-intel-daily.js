@@ -18,6 +18,7 @@ const {
   buildPaperHtmlAttemptPaths,
   buildDependencyCardPayload,
   buildSessionContextPayload,
+  inspectPaperArtifactReleaseReadiness,
   parseArgs,
   minimumArtifactCount,
   planDailyGenerationRoute,
@@ -130,6 +131,40 @@ test('buildHtmlInputCostSignals records prompt bytes, image bytes, and heuristic
   assert.equal(metrics.attachedPageImageBytes, 15);
   assert.equal(metrics.promptTokenEstimate > 0, true);
   assert.equal(metrics.providerUsageAvailable, false);
+});
+
+test('inspectPaperArtifactReleaseReadiness rejects fallback-style artifacts and accepts full codex-chain artifacts', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-intel-release-ready-'));
+  const promptPath = path.join(tempDir, 'generation_prompt.md');
+  const finalMessagePath = path.join(tempDir, 'codex_final_message.txt');
+  const initialHtmlPath = path.join(tempDir, 'index.initial.html');
+  fs.writeFileSync(promptPath, '# prompt\n', 'utf8');
+  fs.writeFileSync(finalMessagePath, '<!DOCTYPE html><html><body>full chain</body></html>\n', 'utf8');
+  fs.writeFileSync(initialHtmlPath, '<!DOCTYPE html><html><body>initial html</body></html>\n', 'utf8');
+
+  const healthy = inspectPaperArtifactReleaseReadiness({
+    title: 'Healthy Paper',
+    generationSource: 'codex-tmux-pdf-first-single-chain',
+    generationPromptPath: promptPath,
+    codexFinalMessagePath: finalMessagePath,
+    initialHtmlPath
+  });
+  assert.equal(healthy.ok, true);
+  assert.deepEqual(healthy.issues, []);
+
+  const degraded = inspectPaperArtifactReleaseReadiness({
+    title: 'Fallback Paper',
+    generationSource: 'deterministic-validated-report',
+    generationPromptPath: '',
+    codexFinalMessagePath: '',
+    initialHtmlPath: ''
+  });
+  assert.equal(degraded.ok, false);
+  assert.ok(degraded.issues.some(issue => issue.includes('generation source must be')));
+  assert.ok(degraded.issues.some(issue => issue.includes('blocked generation source')));
+  assert.ok(degraded.issues.some(issue => issue.includes('missing generation prompt artifact')));
+  assert.ok(degraded.issues.some(issue => issue.includes('missing codex final message artifact')));
+  assert.ok(degraded.issues.some(issue => issue.includes('missing initial html artifact')));
 });
 
 test('decorateSelectedPapers adds recommendation reasons, anchor links, and reading order text', () => {
