@@ -74,6 +74,17 @@ Research Intel 的核心产物不是“消息摘要”，而是单篇论文页�
 
 ## 快速开始
 
+如果你是第一次接触这个仓库，推荐按下面这条路径来：
+
+```text
+先确认 codex CLI 自己可用
+-> 复制 .env.example
+-> 只改最小必填配置
+-> 用示例画像跑一轮 daily:no-telegram
+-> 再启动 Web 看结果
+-> 最后再补 Telegram 和 cron
+```
+
 ### 0. 先确认 Codex CLI 可用
 
 Research Intel 的默认路径是：让运行在 tmux 独立会话中的 Codex 围绕 `paper.pdf` 生成并验证单篇论文 HTML。这个仓库不负责你的 Codex 登录、服务提供方、基础地址或 API key 配置；这些需要先在 Codex CLI 自己的配置层完成。下面这条命令只用于确认你的 CLI 与服务配置已经就绪。
@@ -84,53 +95,56 @@ codex exec --skip-git-repo-check -C /tmp -m gpt-5.4 "Reply with OK only."
 
 如果这条命令在你的机器上还没通，先把 Codex CLI 配好，再继续下面的仓库初始化。
 
-### 1. 三分钟试跑
-
-如果你只是想先看看这套系统跑出来是什么样，不想先回答一轮初始化问题，可以先用示例画像试跑一遍：
-
-```bash
-npm install
-cp .env.example .env
-npm run profile:example
-npm run daily:no-telegram
-npm run web:start
-```
-
-这条路径默认不会触发 Telegram 推送，适合第一次试跑整条流程。
-
-### 2. 安装依赖
+### 1. 安装依赖并复制配置
 
 ```bash
 npm install
 cp .env.example .env
 ```
 
-然后至少把 `.env` 里的这些项目级配置改成自己的值：
+### 2. 第一次本地试跑，先只改最小配置
 
-- Codex HTML 生成配置
-  - `RESEARCH_INTEL_CODEX_HTML_MODEL`：默认 `gpt-5.4`
-  - `RESEARCH_INTEL_CODEX_HTML_REASONING_EFFORT`：可选，默认 `medium`
-  - `RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS`：可选，默认 `1800000`（30 分钟，适合单篇 HTML 长跑）
-- Telegram 推送配置
-  - `TELEGRAM_BOT_TOKEN`
-  - `TELEGRAM_CHAT_ID`
-  - 如果本机访问 Telegram API 需要代理，再设置 `TELEGRAM_USE_PROXY=true` 与 `TELEGRAM_PROXY_URL`
-- Web 控制台配置
+如果你只是想先把链路跑通，不要一开始就把所有变量都填满。第一次本地 smoke run，通常只需要先确认：
+
+- `codex exec ...` 已经在当前机器上独立可用
+- `.env` 里至少改掉 Web 登录的两项
   - `RESEARCH_INTEL_WEB_PASSWORD`
   - `RESEARCH_INTEL_WEB_SESSION_SECRET`
+- Telegram 相关变量先留空，因为第一轮建议跑 `npm run daily:no-telegram`
+- `RESEARCH_INTEL_CODEX_HTML_MODEL`、`RESEARCH_INTEL_CODEX_HTML_REASONING_EFFORT`、`RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS` 一般先保持 `.env.example` 默认值即可
+- `RESEARCH_INTEL_CHROME_PATH` 只有在浏览器校验阶段报“找不到浏览器”时才需要手动设置
+
+最小可运行配置可以直接从这个块开始：
+
+```dotenv
+RESEARCH_INTEL_WEB_PASSWORD=replace-with-a-strong-password
+RESEARCH_INTEL_WEB_SESSION_SECRET=replace-with-a-long-random-secret
+```
+
+如果你此时还不准备启 Web，只想先看 `daily:no-telegram` 是否跑通，那么项目级配置甚至可以先只保留 `.env.example` 默认值，等你要打开 Web 时再补上上面两项。
 
 ### 3. 初始化研究画像
 
+第一次推荐优先用示例画像试跑，先确认整条链路是通的，再换成你自己的研究方向。
+
 两种方式都支持：
 
-- 交互式初始化
-  ```bash
-  npm run profile:init
-  ```
 - 复制示例画像
   ```bash
   npm run profile:example
   ```
+- 交互式初始化
+  ```bash
+  npm run profile:init
+  ```
+
+如果你更喜欢先看真实效果，推荐先执行：
+
+```bash
+npm run profile:example
+```
+
+这会把示例画像写入 `work/research-intel/profile/`，更适合第一次试跑或空白环境。
 
 交互式脚本会逐步询问：
 
@@ -142,7 +156,7 @@ cp .env.example .env
 - 长期账本第一层要按哪些问题展开
 - 哪些论文是你的锚点
 
-生成结果会写入 `work/research-intel/profile/`。
+无论哪种方式，生成结果都会写入 `work/research-intel/profile/`。
 
 如果你更喜欢在 Web 里完成第一次填写，而不是在终端里逐题回答：
 
@@ -158,21 +172,24 @@ cp .env.example .env
 
 仓库里的 `examples/profile/default/` 只是一个演示样例，用来展示画像文件长什么样，不会自动覆盖你的真实运行画像。只有你手动执行 `npm run profile:example` 时，它才会写入 `work/research-intel/profile/`。
 
-### 4. 先跑一轮生成流程
+### 4. 先跑一轮无推送生成流程
 
 ```bash
 npm run daily:no-telegram
 ```
 
-第一次建议先用 `daily:no-telegram` 跑通默认流程，再切到真实推送。
+第一次强烈建议先用 `daily:no-telegram` 跑通默认流程，再切到真实推送。这样你可以先验证：
 
-如果你已经把 Telegram 配置填好，也可以直接跑：
+- 论文是否能正常下载
+- 每篇论文的独立 HTML 是否能生成
+- 浏览器级校验是否能通过
+- route / dependency / ledger 等工件是否都已落盘
 
-```bash
-npm run daily
-```
+如果这一步失败，优先看终端报错、`work/research-intel/daily/<date>/` 和 `research-intel-records/daily/<date>/` 里的输出，再决定是否需要补 `RESEARCH_INTEL_CHROME_PATH`、Telegram 代理或其他环境项。
 
-### 5. 启动 Web 控制台
+### 5. 启动 Web 控制台并查看结果
+
+如果 `daily:no-telegram` 已经跑通，再启 Web 看产物最稳：
 
 ```bash
 npm run web:start
@@ -184,7 +201,30 @@ npm run web:start
 http://127.0.0.1:3086/research-intel/
 ```
 
-### 6. 启动每日调度
+登录后你应该能看到：
+
+- 最近一次运行状态
+- 历史日报列表
+- 当天的论文卡片和单篇 HTML 入口
+- `编辑区` 里的研究画像、种子论文和反馈入口
+
+### 6. 确认本地链路稳定后，再接 Telegram
+
+如果你已经完成上面的本地验证，再回到 `.env` 补这些推送配置：
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- 如果当前网络访问 Telegram API 需要代理，再补：
+  - `TELEGRAM_USE_PROXY=true`
+  - `TELEGRAM_PROXY_URL=...`
+
+然后再执行：
+
+```bash
+npm run daily
+```
+
+### 7. 最后再安装每日调度
 
 ```bash
 npm run cron:install
