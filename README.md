@@ -3,37 +3,27 @@
 > 不是给想刷更多论文的人。  
 > 是给想把研究主线慢慢做厚的人。
 
-它不追求“今天又抓了多少论文”。`Research Intel` 想做的事更具体一点：每天只留下少量真正值得看的论文，然后把每篇整理成一份后面还能继续回头用的 HTML 档案。
+`Research Intel` 会从你的研究画像、种子论文和反馈里，只留下当天真正贴着主线的那几篇论文。每篇都从 `paper.pdf` 出发，最后整理成可继续回看、补写、交叉引用的 HTML 档案。推荐逻辑、阅读历史和方法线索都留在你自己的文件系统里。
 
-如果你平时也有这几种感觉：
-
-- 不想再被几十篇关键词结果淹掉
-- 想知道“为什么今天该看这篇”
-- 想把阅读历史、锚点论文、方法线索和长期判断留在自己文件系统里
-
-那你大概会明白这个仓库想解决什么。
+适合已经有研究主线，但不想再被关键词结果和一次性摘要牵着走的人。
 
 [快速开始](#快速开始) · [部署说明](docs/部署说明.md) · [v0.1.0 Release](https://github.com/cnfjlhj/research-intel/releases/tag/v0.1.0)
 
-下面这两张是实际界面截图：
+下面直接看实际界面：
 
 <p align="center">
   <img src="docs/assets/readme/control-room.png" alt="Research Intel 控制台界面" width="48%" />
   <img src="docs/assets/readme/daily-picks.png" alt="Research Intel 今日论文界面" width="48%" />
 </p>
 
-左边是控制台，右边是当天论文页。不是概念图，就是现在这套系统的实际界面。
+左边是控制台，右边是当天论文页。截图来自当前仓库的真实运行界面，不是概念图。
 
 ## 它和普通论文推送工具不太一样
 
-- `以 PDF 为先`
-  - 每篇论文都从 `paper.pdf` 出发，不是拼二手摘要。
-- `一篇论文一个工作区`
-  - 每篇论文独立目录、独立上下文、独立产物，不和别的论文混在一起。
-- `产物会落盘`
-  - 不是对话里看完就没了，而是会生成可独立打开的 HTML 档案页。
-- `研究状态掌握在你自己手里`
-  - 画像、反馈、方法账本、历史日报都在本地文件里，可审计、可导出、可继续改。
+- `以 PDF 为先`：每篇论文都从 `paper.pdf` 出发，不是拼二手摘要。
+- `一篇论文一个工作区`：每篇论文独立目录、独立上下文、独立产物，不和别的论文混在一起。
+- `产物会落盘`：最后得到可独立打开的 HTML 档案页，不是一次性聊天摘要。
+- `研究状态在你自己手里`：画像、反馈、方法账本、历史日报都在本地文件里，可审计、可导出、可继续改。
 
 ## 它解决什么问题
 
@@ -46,24 +36,15 @@
 
 - 更小但更像主线的每日论文集合
 - 每篇论文一个独立 HTML 档案页，而不是一次性聊天摘要
-- 可长期累积的文件化研究记忆
-  - `research_brief.md`
-  - `seed_papers.jsonl`
-  - `feedback.jsonl`
-  - `method_tree_notes.md`
-- 一条清晰默认主链路
-  - `paper.pdf -> 单篇论文工作区 -> tmux 独立会话中的 Codex -> 已校验档案页`
+- 可长期累积的文件化研究记忆：`research_brief.md`、`seed_papers.jsonl`、`feedback.jsonl`、`method_tree_notes.md`
+- 一条清晰默认主链路：`paper.pdf -> 单篇论文工作区 -> tmux 独立会话中的 Codex -> 已校验档案页`
 
 ## 默认主链路
 
-- `以 PDF 为先`
-  - `paper.pdf` 是唯一真相来源；抽取文本、页面图像和外部讨论都只能做辅助定位与核对。
-- `单篇论文作用域`
-  - 每篇论文都有独立工作目录、独立上下文、独立产物，不共享跨论文脏状态。
-- `tmux 托管的 Codex`
-  - 每篇论文都在独立 tmux 会话中运行 Codex，便于追踪、恢复和核查。
-- `已校验档案页`
-  - 生成结果不是一次性聊天回复，而是会落盘、再做浏览器校验的可独立打开 HTML 档案页。
+- `以 PDF 为先`：`paper.pdf` 是唯一真相来源；抽取文本、页面图像和外部讨论都只能做辅助定位与核对。
+- `单篇论文作用域`：每篇论文都有独立工作目录、独立上下文、独立产物，不共享跨论文脏状态。
+- `tmux 托管的 Codex`：每篇论文都在独立 tmux 会话中运行，便于追踪、恢复和核查。
+- `已校验档案页`：生成结果会落盘，并经过浏览器校验，而不是停留在一次性聊天窗口里。
 
 这条主链路的目标不是“尽量多产出”，而是把每篇入选论文都做成后续还能复查、对照和继续扩写的研究资产。
 
@@ -134,9 +115,7 @@ cp .env.example .env
 如果你只是想先把链路跑通，不要一开始就把所有变量都填满。第一次本地 smoke run，通常只需要先确认：
 
 - `codex exec ...` 已经在当前机器上独立可用
-- `.env` 里至少改掉 Web 登录的两项
-  - `RESEARCH_INTEL_WEB_PASSWORD`
-  - `RESEARCH_INTEL_WEB_SESSION_SECRET`
+- `.env` 里至少改掉 Web 登录的两项：`RESEARCH_INTEL_WEB_PASSWORD`、`RESEARCH_INTEL_WEB_SESSION_SECRET`
 - Telegram 相关变量先留空，因为第一轮建议跑 `npm run daily:no-telegram`
 - `RESEARCH_INTEL_CODEX_HTML_MODEL`、`RESEARCH_INTEL_CODEX_HTML_REASONING_EFFORT`、`RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS` 一般先保持 `.env.example` 默认值即可
 - `RESEARCH_INTEL_CHROME_PATH` 只有在浏览器校验阶段报“找不到浏览器”时才需要手动设置
