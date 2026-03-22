@@ -1,370 +1,184 @@
-# Research Intel（研究情报系统）
+# Research Intel
 
-> 不是给想刷更多论文的人。  
-> 是给想把研究主线慢慢做厚的人。
+每天早上醒来，Telegram 上已经躺好了 3–8 篇和你研究方向最相关的论文，每篇都有一份完整的 HTML 档案——不是摘要，是从 PDF 原文拆出来的结构化笔记，随时能回头查。
 
-`Research Intel` 会从你的研究画像、种子论文和反馈里，只留下当天真正贴着主线的那几篇论文。每篇都从 `paper.pdf` 出发，最后整理成可继续回看、补写、交叉引用的 HTML 档案。推荐逻辑、阅读历史和方法线索都留在你自己的文件系统里。
+这就是 Research Intel 在干的事。
 
-适合已经有研究主线，但不想再被关键词结果和一次性摘要牵着走的人。
+<p align="center">
+  <img src="docs/assets/readme/hero-ui.jpg" alt="Research Intel 实际运行界面" width="820" />
+  <br/>
+  <sub>左：控制台 / 右：今日论文页。真实运行截图，不是设计稿。</sub>
+</p>
 
-[快速开始](#快速开始) · [部署说明](docs/部署说明.md) · [v0.1.0 Release](https://github.com/cnfjlhj/research-intel/releases/tag/v0.1.0)
+---
 
-下面直接看实际界面：
+## 为什么做这个
 
-![Research Intel 控制台与今日论文界面](docs/assets/readme/hero-ui.jpg)
+arXiv 每天几千篇。现有工具要么给你一个噪声很大的关键词订阅，要么给你一段 GPT 摘要——看完就扔，第二天想回头看已经找不到了。
 
-左边是控制台，右边是当天论文页。截图来自当前仓库的真实运行界面，不是概念图。
+我想要的是：
 
-## 它和普通论文推送工具不太一样
+- **只给我真正相关的**。不是关键词命中就推，而是根据我在做什么研究、读过什么论文、给过什么反馈来筛。
+- **每篇论文有一份像样的档案**。研究动机、方法拆解、实验、评论都整理好，不是一次性消费品。
+- **数据在我自己手里**。推荐逻辑、阅读历史、方法脉络都是本地文件，不锁在任何平台里。
 
-- `以 PDF 为先`：每篇论文都从 `paper.pdf` 出发，不是拼二手摘要。
-- `一篇论文一个工作区`：每篇论文独立目录、独立上下文、独立产物，不和别的论文混在一起。
-- `产物会落盘`：最后得到可独立打开的 HTML 档案页，不是一次性聊天摘要。
-- `研究状态在你自己手里`：画像、反馈、方法账本、历史日报都在本地文件里，可审计、可导出、可继续改。
+## 工作流程
 
-## 它解决什么问题
+```
+                          你的研究画像
+                    (方向 / 关键词 / 种子论文 / 反馈)
+                               │
+                               ▼
+                 ┌─────────────────────────────┐
+                 │     arXiv 搜索 + 打分筛选     │
+                 │   OpenReview 评审数据增强      │
+                 └──────────────┬──────────────┘
+                               │
+                     ┌─────────┴─────────┐
+                     ▼                   ▼
+               must-read            watchlist
+              (3-8 篇精选)         (备选池)
+                     │
+                     ▼
+          ┌─────── 每篇论文 ───────┐
+          │                        │
+          │  1. 下载 paper.pdf     │
+          │  2. 独立工作目录        │
+          │  3. Codex 生成 HTML    │
+          │  4. 浏览器校验          │
+          │                        │
+          └───────────┬────────────┘
+                      │
+           ┌──────────┼──────────┐
+           ▼          ▼          ▼
+      Telegram     Web 控制台   方法账本
+     (每日推送)   (历史回看)   (长期积累)
+```
 
-- 每天看几十篇关键词结果，噪声太大，真正值得读的论文反而埋掉了
-- 一次性摘要很快过期，第二天很难回头对照和继续扩写
-- 长期研究状态容易锁进黑盒数据库，难审计、难导出、难改造
-- 多篇论文共用一个脏上下文，最后很难知道每个结论到底从哪来
+几个值得一提的设计：
 
-## 你会得到什么
+- **PDF 优先**。所有档案从原始 PDF 出发生成，不是拼二手摘要。
+- **一篇一隔离**。每篇论文有自己的目录、自己的 Codex 会话，互不污染。
+- **产物会落盘**。生成的 HTML 是独立文件，不依赖任何在线服务就能打开。
+- **方法账本**。读过的论文会沉淀到一棵方法树里，时间久了就是你研究方向的知识图谱。
 
-- 更小但更像主线的每日论文集合
-- 每篇论文一个独立 HTML 档案页，而不是一次性聊天摘要
-- 可长期累积的文件化研究记忆：`research_brief.md`、`seed_papers.jsonl`、`feedback.jsonl`、`method_tree_notes.md`
-- 一条清晰默认主链路：`paper.pdf -> 单篇论文工作区 -> tmux 独立会话中的 Codex -> 已校验档案页`
+## 论文档案长什么样
 
-## 默认主链路
+每篇论文不是一段话的摘要，而是一份结构化的 HTML 页面：
 
-- `以 PDF 为先`：`paper.pdf` 是唯一真相来源；抽取文本、页面图像和外部讨论都只能做辅助定位与核对。
-- `单篇论文作用域`：每篇论文都有独立工作目录、独立上下文、独立产物，不共享跨论文脏状态。
-- `tmux 托管的 Codex`：每篇论文都在独立 tmux 会话中运行，便于追踪、恢复和核查。
-- `已校验档案页`：生成结果会落盘，并经过浏览器校验，而不是停留在一次性聊天窗口里。
+| 板块 | 内容 |
+|------|------|
+| 研究动机 | 这篇论文要解决什么，为什么现在值得看 |
+| 数学与建模 | 核心公式、模型结构拆解 |
+| 实验设计 | 做了什么实验、对比了谁 |
+| 结果与结论 | 关键指标、主要发现 |
+| 评论 | 盲点、局限、不能轻信的地方 |
+| 审稿回复 | OpenReview 上的审稿意见和 rebuttal（如有） |
+| One More Thing | 延伸思考、和你研究的关联 |
 
-这条主链路的目标不是“尽量多产出”，而是把每篇入选论文都做成后续还能复查、对照和继续扩写的研究资产。
-
-![以 PDF 为先的单篇论文主链路](docs/assets/readme/pipeline-pdf-first.svg)
-
-## 它怎么工作
-
-1. 从研究画像、种子论文和反馈中生成当天候选池。
-2. 选出一小组最贴近当前主线的问题论文，而不是最大化篇数。
-3. 下载每篇论文的 `paper.pdf`。
-4. 为每篇论文建立独立工作目录，并在独立 tmux session 中调用 Codex。
-5. 生成可独立打开的 HTML 档案页，并做浏览器级校验。
-6. 将日报、阅读顺序、方法账本和单篇 HTML 档案落到本地文件系统，供 Web 控制台、Telegram 和后续脚本继续使用。
-
-## 单篇论文页里有什么
-
-Research Intel 的核心产物不是“消息摘要”，而是单篇论文页。每个页面都会把研究动机、问题定义、方法拆解、实验结论、评论与延伸问题组织成一个可读、可复查、可长期维护的档案。
-
-![单篇论文档案结构](docs/assets/readme/paper-archive.svg)
-
-## 为什么可以信它
-
-- 所有单篇论文页都从 `paper.pdf` 起步，而不是从零散摘录拼装
-- 每篇论文都在独立 tmux 会话里的 Codex 中生成
-- 产物会落盘为可独立打开的 HTML 档案页，而不是停留在对话窗口里
-- 页面会经过浏览器级检查，排查远程依赖、占位符、控制台报错和缺失结构
-- 运行结果、方法账本和历史记录都保存在本地文件系统里，便于审计、导出和二次开发
-
-## 适合谁
-
-- 需要每天获取 3 到 8 篇高相关论文，而不是几十篇关键词噪声
-- 希望推荐逻辑能随着自己读过的论文和反馈持续变化
-- 想把“为什么今天看这篇、它补了哪块方法拼图”沉淀为长期账本
-- 希望整套系统能自托管、可审计、可改造
+每份档案都经过 Puppeteer 浏览器校验——远程依赖能不能加载、页面结构是否完整、控制台有没有报错——不是生成完就不管了。
 
 ## 快速开始
 
-如果你是第一次接触这个仓库，推荐按下面这条路径来：
-
-```text
-先确认 codex CLI 自己可用
--> 复制 .env.example
--> 只改最小必填配置
--> 用示例画像跑一轮 daily:no-telegram
--> 再启动 Web 看结果
--> 最后再补 Telegram 和 cron
-```
-
-### 0. 先确认 Codex CLI 可用
-
-Research Intel 的默认路径是：让运行在 tmux 独立会话中的 Codex 围绕 `paper.pdf` 生成并验证单篇论文 HTML。这个仓库不负责你的 Codex 登录、服务提供方、基础地址或 API key 配置；这些需要先在 Codex CLI 自己的配置层完成。下面这条命令只用于确认你的 CLI 与服务配置已经就绪。
+需要：Node.js 20+ / tmux / pdftotext / Chrome / [Codex CLI](https://github.com/openai/codex)
 
 ```bash
-codex exec --skip-git-repo-check -C /tmp -m gpt-5.4 "Reply with OK only."
-```
+# 1. 克隆安装
+git clone https://github.com/cnfjlhj/research-intel.git
+cd research-intel && npm install
 
-如果这条命令在你的机器上还没通，先把 Codex CLI 配好，再继续下面的仓库初始化。
-
-### 1. 安装依赖并复制配置
-
-```bash
-npm install
+# 2. 配置
 cp .env.example .env
-```
+# 编辑 .env，至少填 Web 密码。Telegram 先不急，等跑通再配。
 
-### 2. 第一次本地试跑，先只改最小配置
-
-如果你只是想先把链路跑通，不要一开始就把所有变量都填满。第一次本地 smoke run，通常只需要先确认：
-
-- `codex exec ...` 已经在当前机器上独立可用
-- `.env` 里至少改掉 Web 登录的两项：`RESEARCH_INTEL_WEB_PASSWORD`、`RESEARCH_INTEL_WEB_SESSION_SECRET`
-- Telegram 相关变量先留空，因为第一轮建议跑 `npm run daily:no-telegram`
-- `RESEARCH_INTEL_CODEX_HTML_MODEL`、`RESEARCH_INTEL_CODEX_HTML_REASONING_EFFORT`、`RESEARCH_INTEL_CODEX_HTML_TIMEOUT_MS` 一般先保持 `.env.example` 默认值即可
-- `RESEARCH_INTEL_CHROME_PATH` 只有在浏览器校验阶段报“找不到浏览器”时才需要手动设置
-
-最小可运行配置可以直接从这个块开始：
-
-```dotenv
-RESEARCH_INTEL_WEB_PASSWORD=replace-with-a-strong-password
-RESEARCH_INTEL_WEB_SESSION_SECRET=replace-with-a-long-random-secret
-```
-
-如果你此时还不准备启 Web，只想先看 `daily:no-telegram` 是否跑通，那么项目级配置甚至可以先只保留 `.env.example` 默认值，等你要打开 Web 时再补上上面两项。
-
-### 3. 初始化研究画像
-
-第一次推荐优先用示例画像试跑，先确认整条链路是通的，再换成你自己的研究方向。
-
-两种方式都支持：
-
-- 复制示例画像
-  ```bash
-  npm run profile:example
-  ```
-- 交互式初始化
-  ```bash
-  npm run profile:init
-  ```
-
-如果你更喜欢先看真实效果，推荐先执行：
-
-```bash
+# 3. 加载示例画像（先确认链路通了，再换成自己的方向）
 npm run profile:example
-```
 
-这会把示例画像写入 `work/research-intel/profile/`，更适合第一次试跑或空白环境。
-
-交互式脚本会逐步询问：
-
-- 研究方向是什么
-- 当前阶段想解决什么问题
-- 哪些关键词该高权重
-- 哪些信号该降权
-- 每天想看几篇
-- 长期账本第一层要按哪些问题展开
-- 哪些论文是你的锚点
-
-无论哪种方式，生成结果都会写入 `work/research-intel/profile/`。
-
-如果你更喜欢在 Web 里完成第一次填写，而不是在终端里逐题回答：
-
-1. 先启动 Web 控制台
-   ```bash
-   npm run web:start
-   ```
-2. 打开 `http://127.0.0.1:3086/research-intel/`
-3. 登录后进入 `编辑区`
-4. 先填写 `首次使用 / 研究画像向导`
-5. 如果你手上已经有感兴趣论文，再用 `论文导入 / 批量种子录入` 补进去
-6. 勾选“保存后立即触发一次今日运行”，或稍后手动执行 `npm run daily:no-telegram`
-
-仓库里的 `examples/profile/default/` 只是一个演示样例，用来展示画像文件长什么样，不会自动覆盖你的真实运行画像。只有你手动执行 `npm run profile:example` 时，它才会写入 `work/research-intel/profile/`。
-
-### 4. 先跑一轮无推送生成流程
-
-```bash
+# 4. 跑一轮试试
 npm run daily:no-telegram
 ```
 
-第一次强烈建议先用 `daily:no-telegram` 跑通默认流程，再切到真实推送。这样你可以先验证：
-
-- 论文是否能正常下载
-- 每篇论文的独立 HTML 是否能生成
-- 浏览器级校验是否能通过
-- route / dependency / ledger 等工件是否都已落盘
-
-如果这一步失败，优先看终端报错、`work/research-intel/daily/<date>/` 和 `research-intel-records/daily/<date>/` 里的输出，再决定是否需要补 `RESEARCH_INTEL_CHROME_PATH`、Telegram 代理或其他环境项。
-
-### 5. 启动 Web 控制台并查看结果
-
-如果 `daily:no-telegram` 已经跑通，再启 Web 看产物最稳：
+跑完之后 `research-intel-records/daily/` 下面会出现当天的产物。启动 Web 看结果：
 
 ```bash
 npm run web:start
+# 打开 http://127.0.0.1:3086/research-intel/
 ```
 
-默认访问地址：
-
-```text
-http://127.0.0.1:3086/research-intel/
-```
-
-登录后你应该能看到：
-
-- 最近一次运行状态
-- 历史日报列表
-- 当天的论文卡片和单篇 HTML 入口
-- `编辑区` 里的研究画像、种子论文和反馈入口
-
-### 6. 确认本地链路稳定后，再接 Telegram
-
-如果你已经完成上面的本地验证，再回到 `.env` 补这些推送配置：
-
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
-- 如果当前网络访问 Telegram API 需要代理，再补：
-  - `TELEGRAM_USE_PROXY=true`
-  - `TELEGRAM_PROXY_URL=...`
-
-然后再执行：
+确认本地没问题了，再接 Telegram 推送和 cron 定时任务：
 
 ```bash
-npm run daily
+# .env 里补上 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID
+npm run daily              # 带推送的完整流程
+npm run cron:install       # 安装每日定时任务
 ```
 
-### 7. 最后再安装每日调度
+> 详细的配置说明、部署选项和环境变量文档见 [部署说明](docs/部署说明.md)。
 
-```bash
-npm run cron:install
-```
+## 研究画像
 
-默认调度主链路就是宿主机 cron -> `run-daily.sh` -> `codex-supervisor.js` -> 按论文拆分的 tmux 托管 Codex HTML 生成。
+推荐结果好不好，取决于你的画像写得好不好。画像就是几个 Markdown 和 JSONL 文件：
 
-`npm run cron:install` 会从 `work/research-intel/profile/research_brief.md` 读取 `timezone` 和 `send_time`，并额外安装一次验证补发任务。
+| 文件 | 作用 |
+|------|------|
+| `research_brief.md` | 你的研究方向、关键词、正负信号、每日篇数 |
+| `seed_papers.jsonl` | 锚点论文，系统用来理解"你想看什么风格的东西" |
+| `feedback.jsonl` | 你对推过的论文的反馈——喜欢、不喜欢、为什么 |
+| `method_taxonomy.json` | 方法树结构，读得越多越丰富 |
 
-## 前置条件
+初始化画像有三种方式：
 
-### 宿主机模式
-
-- Node.js 20+
-- `pdftotext`
-  - Debian / Ubuntu: `sudo apt-get install poppler-utils`
-- Chrome / Chromium
-  - 用于 HTML 浏览器校验
-- `tmux` 与 `codex`
-  - 默认部署路径需要这两项
-  - 开始前先确保当前 shell 里 `codex exec -m gpt-5.4 ...` 已经能独立跑通
+- `npm run profile:example` — 用示例画像先跑通
+- `npm run profile:init` — 终端交互式填写
+- Web 控制台 → 编辑区 → 研究画像向导
 
 ## 仓库结构
 
-```text
+```
 research-intel/
-├── examples/profile/default/        # 示例画像（演示用，可替换为任意研究领域）
-├── scripts/bootstrap/               # 冷启动初始化脚本
-├── scripts/research-intel/          # 核心调度、HTML、Web、推送逻辑
-├── tests/                           # 单元测试
-├── work/                            # 运行态（git ignore）
-└── research-intel-records/          # 产物与历史（git ignore）
+├── scripts/research-intel/   # 主逻辑：调度、生成、推送、Web
+│   └── lib/                  # 核心模块（~25 个文件）
+├── scripts/bootstrap/        # 画像初始化
+├── examples/profile/         # 示例画像
+├── tests/                    # 测试
+├── docs/                     # 文档
+├── work/                     # 运行态数据 (gitignore)
+└── research-intel-records/   # 产出档案 (gitignore)
 ```
 
-仓库里只应提交代码、示例画像和文档。你的真实 `work/`、`research-intel-records/`、`.env` 不应该进入版本库。
+## 常用命令
 
-## 本地、GitHub、宿主机的关系
+| 命令 | 干什么 |
+|------|--------|
+| `npm run daily` | 跑一轮完整流程（含 Telegram 推送） |
+| `npm run daily:no-telegram` | 只生成不推送，适合本地调试 |
+| `npm run web:start` | 启动 Web 控制台 |
+| `npm run web:stop` | 停止 Web 控制台 |
+| `npm run verify` | 检查并补发漏掉的推送 |
+| `npm run profile:init` | 交互式初始化研究画像 |
+| `npm run cron:install` | 安装每日 cron 定时任务 |
+| `npm test` | 跑测试 |
 
-- 本地 Git 仓库
-  - 代码真相源，应该优先在这里开发、测试和提交。
-- GitHub 仓库
-  - 用来同步脚本、测试和文档，不承载你的运行态数据。
-- 宿主机部署目录
-  - 用来跑 Web、cron、tmux worker 和当天产物。
-  - 它可以不是 Git 仓库，更接近“运行副本”而不是“开发主仓库”。
+## 不适合什么场景
 
-推荐顺序：
+说清楚边界比吹功能更重要：
 
-1. 在本地仓库完成改动并跑测试。
-2. 推到 GitHub，保持代码源清晰。
-3. 再把代码同步到宿主机，但保留宿主机自己的 `.env`、`work/`、`research-intel-records/`。
+- **想要团队协作**——这是给个人用的，没有多用户、没有权限管理。
+- **不想自己部署**——需要一台 Linux 机器，需要自己配 Codex CLI。没有 SaaS 版本。
+- **想覆盖所有论文源**——目前只接了 arXiv 和 OpenReview。Semantic Scholar 之类的没做。
+- **对 AI 生成内容零容忍**——档案是 Codex 基于 PDF 生成的，质量很好但不是人工撰写。
 
-## 宿主机升级
+## 隐私
 
-对已有宿主机做代码升级时，建议只同步代码，不覆盖运行态：
-
-```bash
-rsync -az --exclude '.git/' \
-  --exclude 'node_modules/' \
-  --exclude 'work/' \
-  --exclude 'research-intel-records/' \
-  --exclude '.env' \
-  /path/to/local/research-intel/ host:/path/to/deploy/research-intel/
-```
-
-同步后至少做两步核验：
-
-```bash
-bash -lc "cd /path/to/deploy/research-intel && node --test tests/codex-enhancement-config.test.js tests/test-research-intel-codex-html.js"
-bash -lc "cd /path/to/deploy/research-intel && bash scripts/research-intel/status-web.sh"
-```
-
-如果宿主机上的 `codex`、`npm` 或 `node` 依赖 `nvm`/登录 shell 初始化，优先用 `bash -lc` 执行远端命令，避免 PATH 假阴性。
-
-## 宿主机 Cron
-
-```bash
-npm run cron:install
-```
-
-这个脚本会：
-
-- 从 `work/research-intel/profile/research_brief.md` 读取 `timezone` 和 `send_time`
-- 用 `RESEARCH_INTEL_VERIFY_DELAY_MINUTES` 计算验证任务时间
-- 安装每日主运行和验证补发两条 cron
-
-改完画像时间后，重新执行一次 `npm run cron:install` 即可覆盖旧配置。
-
-## 跑完之后会看到什么
-
-第一次安全试跑完成后，你通常会得到这几类结果：
-
-- `work/research-intel/profile/`
-  - 画像文件、锚点论文和长期偏好入口
-  - Web 导入的单篇或批量论文也会沉淀到 `seed_papers.jsonl`
-- `research-intel-records/daily/<date>/`
-  - 当天的 brief、reading order、method tree 和单篇 HTML 档案
-- `http://127.0.0.1:3086/research-intel/`
-  - 登录后的 Web 控制台，可查看历史日报、知识账本和运行状态
-  - `编辑区` 可继续修改研究画像、导入论文、再触发一轮运行
-
-如果当天链路已经跑完，但发现有漏发或想做补发验证，可以执行：
-
-```bash
-npm run verify
-```
-
-## 数据与隐私边界
-
-这些东西默认不应该进 Git：
-
-- `.env`
-- `work/`
-- `research-intel-records/`
-- 日报 HTML、PDF、失败截图、运行日志、历史发送记录
-
-如果你要公开自己的实例，建议只公开：
-
-- 代码
-- 脱敏后的 `examples/profile/`
-- 少量演示截图
-
-不要直接公开真实运行产物和真实研究历史。
+你的研究数据存储在本地。对外通信仅限三处：arXiv API（查询论文）、Codex API（生成档案内容）、Telegram API（推送通知）。除此之外没有任何数据外发。`.env`、`work/`、`research-intel-records/` 都在 `.gitignore` 里。
 
 ## 文档
 
-- [架构说明](docs/架构说明.md)
-- [部署说明](docs/部署说明.md)
-- [初始化画像说明](docs/初始化画像说明.md)
-- [数据目录说明](docs/数据目录说明.md)
+- [部署说明](docs/部署说明.md) — 完整的环境配置和部署方式
+- [架构说明](docs/架构说明.md) — 系统设计和模块关系
+- [初始化画像说明](docs/初始化画像说明.md) — 画像文件的详细格式
+- [数据目录说明](docs/数据目录说明.md) — work/ 和 records/ 的目录结构
 
-## 测试
-
-```bash
-npm test
-```
-
-## 许可证
+## License
 
 MIT
