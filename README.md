@@ -11,10 +11,7 @@
 
 下面直接看实际界面：
 
-<p align="center">
-  <img src="docs/assets/readme/control-room.png" alt="Research Intel 控制台界面" width="48%" />
-  <img src="docs/assets/readme/daily-picks.png" alt="Research Intel 今日论文界面" width="48%" />
-</p>
+![Research Intel 控制台与今日论文界面](docs/assets/readme/hero-ui.jpg)
 
 左边是控制台，右边是当天论文页。截图来自当前仓库的真实运行界面，不是概念图。
 
