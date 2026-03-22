@@ -1,6 +1,7 @@
 # Research Intel（研究情报系统）
 
-这是给那种不想天天刷几十篇结果、只想把研究主线慢慢做厚的人准备的。
+> 不是给想刷更多论文的人。  
+> 是给想把研究主线慢慢做厚的人。
 
 它不追求“今天又抓了多少论文”。`Research Intel` 想做的事更具体一点：每天只留下少量真正值得看的论文，然后把每篇整理成一份后面还能继续回头用的 HTML 档案。
 
@@ -12,11 +13,7 @@
 
 那你大概会明白这个仓库想解决什么。
 
-快速入口：
-
-- [快速开始](#快速开始)
-- [部署说明](docs/部署说明.md)
-- [v0.1.0 Release](https://github.com/cnfjlhj/research-intel/releases/tag/v0.1.0)
+[快速开始](#快速开始) · [部署说明](docs/部署说明.md) · [v0.1.0 Release](https://github.com/cnfjlhj/research-intel/releases/tag/v0.1.0)
 
 下面这两张是实际界面截图：
 
@@ -24,6 +21,8 @@
   <img src="docs/assets/readme/control-room.png" alt="Research Intel 控制台界面" width="48%" />
   <img src="docs/assets/readme/daily-picks.png" alt="Research Intel 今日论文界面" width="48%" />
 </p>
+
+左边是控制台，右边是当天论文页。不是概念图，就是现在这套系统的实际界面。
 
 ## 它和普通论文推送工具不太一样
 
