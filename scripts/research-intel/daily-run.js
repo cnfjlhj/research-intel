@@ -16,10 +16,15 @@ const {
   injectEvidenceGallery,
   makeHtmlStandalone,
   replaceFigurePlaceholdersWithEvidence,
-  buildCodexHtmlTmuxRunPaths,
-  runCodexHtmlGeneration,
   validateHtmlWithBrowser
 } = require('./lib/codex-html');
+const {
+  buildProviderRunPaths,
+  providerGenerationSourceLabel,
+  resolveHtmlProvider,
+  resolveProviderConfig,
+  runHtmlGeneration
+} = require('./lib/html-provider');
 const { normalizeArxivId, normalizeTitle, dedupePapers, scorePaper } = require('./lib/core');
 const {
   buildDeliveryPlan,
@@ -58,6 +63,7 @@ const {
 const { sendTelegramDocument } = require('./lib/telegram');
 const { resolveHtmlTemplateReference } = require('./lib/template');
 const { resolveCodexEnhancementConfig } = require('./lib/codex-enhancement-config');
+const { resolveClaudeCodeEnhancementConfig } = require('./lib/claude-code-enhancement-config');
 
 const ROOT_DIR = path.join(__dirname, '../..');
 const DEFAULT_PROFILE_DIR = path.join(ROOT_DIR, 'work/research-intel/profile');
@@ -71,7 +77,10 @@ const DEFAULT_HTML_TEXT_PREVIEW_LIMIT = 16000;
 const DEFAULT_HTML_EVIDENCE_IMAGE_LIMIT = 6;
 const FAST_SMOKE_HTML_EVIDENCE_IMAGE_LIMIT = 4;
 const DEFAULT_HTML_GENERATION_MAX_ATTEMPTS = 2;
-const RELEASE_REQUIRED_GENERATION_SOURCE = 'codex-tmux-pdf-first-single-chain';
+const RELEASE_ALLOWED_GENERATION_SOURCES = new Set([
+  'codex-tmux-pdf-first-single-chain',
+  'claude-code-print-pdf-first-single-chain'
+]);
 const RELEASE_BLOCKED_GENERATION_SOURCE_PATTERNS = [
   /fallback/i,
   /deterministic/i
@@ -161,7 +170,8 @@ function shouldLoadProjectEnv(options = {}) {
 
 function resolveRuntimeModelConfig(env = process.env) {
   const configuredChatTimeoutMs = Number(env.RESEARCH_INTEL_CHAT_TIMEOUT_MS || '60000');
-  const codexEnhancementConfig = resolveCodexEnhancementConfig(env);
+  const htmlProvider = resolveHtmlProvider(env);
+  const providerConfig = resolveProviderConfig(env);
 
   return {
     htmlApiBaseUrl: env.RESEARCH_INTEL_API_BASE_URL || '',
@@ -171,10 +181,15 @@ function resolveRuntimeModelConfig(env = process.env) {
     chatTimeoutMs: Number.isFinite(configuredChatTimeoutMs) && configuredChatTimeoutMs > 0
       ? configuredChatTimeoutMs
       : 60000,
-    codexHtmlEnhancementEnabled: codexEnhancementConfig.enabled,
-    codexHtmlModel: codexEnhancementConfig.model,
-    codexHtmlReasoningEffort: codexEnhancementConfig.reasoningEffort,
-    codexHtmlTimeoutMs: codexEnhancementConfig.timeoutMs
+    htmlProvider,
+    htmlProviderModel: providerConfig.model,
+    htmlProviderReasoningEffort: providerConfig.reasoningEffort || '',
+    htmlProviderTimeoutMs: providerConfig.timeoutMs,
+    htmlProviderEnabled: providerConfig.enabled,
+    codexHtmlEnhancementEnabled: providerConfig.enabled,
+    codexHtmlModel: providerConfig.model,
+    codexHtmlReasoningEffort: providerConfig.reasoningEffort || '',
+    codexHtmlTimeoutMs: providerConfig.timeoutMs
   };
 }
 
@@ -918,8 +933,8 @@ function inspectPaperArtifactReleaseReadiness(paper = {}) {
   const issues = [];
   const generationSource = String(paper.generationSource || '').trim();
 
-  if (generationSource !== RELEASE_REQUIRED_GENERATION_SOURCE) {
-    issues.push(`generation source must be ${RELEASE_REQUIRED_GENERATION_SOURCE}, got ${generationSource || '(empty)'}`);
+  if (!RELEASE_ALLOWED_GENERATION_SOURCES.has(generationSource)) {
+    issues.push(`generation source must be one of [${[...RELEASE_ALLOWED_GENERATION_SOURCES].join(', ')}], got ${generationSource || '(empty)'}`);
   }
   if (RELEASE_BLOCKED_GENERATION_SOURCE_PATTERNS.some(pattern => pattern.test(generationSource))) {
     issues.push(`blocked generation source detected: ${generationSource}`);
@@ -972,7 +987,9 @@ async function runPaperHtmlGenerationAttempt({
   attemptPaths,
   inputCostSignals
 }) {
-  const runtimePaths = buildCodexHtmlTmuxRunPaths({
+  const provider = options.htmlProvider || 'codex';
+  const runtimePaths = buildProviderRunPaths({
+    provider,
     workingDir: paperDir,
     targetHtmlPath: attemptPaths.htmlPath,
     finalMessagePath: attemptPaths.finalMessagePath
@@ -981,7 +998,8 @@ async function runPaperHtmlGenerationAttempt({
   writeText(attemptPaths.promptPath, `${promptText}\n`);
 
   try {
-    const codexRun = await runCodexHtmlGeneration({
+    const generationRun = await runHtmlGeneration({
+      provider,
       workingDir: paperDir,
       targetHtmlPath: attemptPaths.htmlPath,
       finalMessagePath: attemptPaths.finalMessagePath,
@@ -994,10 +1012,10 @@ async function runPaperHtmlGenerationAttempt({
 
     const rawFinalMessage = fs.existsSync(attemptPaths.finalMessagePath)
       ? fs.readFileSync(attemptPaths.finalMessagePath, 'utf8')
-      : codexRun.finalMessage || '';
+      : generationRun.finalMessage || '';
     const cleanedHtml = cleanHtmlResponse(rawFinalMessage);
-    writeText(attemptPaths.codexStdoutPath, `${codexRun.stdout || ''}\n`);
-    writeText(attemptPaths.codexStderrPath, `${codexRun.stderr || ''}\n`);
+    writeText(attemptPaths.codexStdoutPath, `${generationRun.stdout || ''}\n`);
+    writeText(attemptPaths.codexStderrPath, `${generationRun.stderr || ''}\n`);
     writeText(attemptPaths.initialModelMessagePath, `${rawFinalMessage}\n`);
     writeText(attemptPaths.initialModelRawPath, `${rawFinalMessage}\n`);
     writeText(attemptPaths.initialHtmlPath, `${cleanedHtml}\n`);
@@ -1034,17 +1052,17 @@ async function runPaperHtmlGenerationAttempt({
       attemptNumber: attemptPaths.attemptNumber,
       attemptLabel: attemptPaths.attemptLabel,
       attemptDir: attemptPaths.attemptDir,
-      sessionName: codexRun.sessionName,
+      sessionName: generationRun.sessionName,
       runtimePaths,
       inputCostSignals,
       outputCostSignals: buildHtmlOutputCostSignals({
-        status: codexRun.status,
+        status: generationRun.status,
         finalMessagePath: attemptPaths.finalMessagePath,
         htmlPath: attemptPaths.htmlPath
       }),
       status: htmlValidation.ok && standaloneValidation.ok ? 'passed_validation' : 'failed_validation',
       generationModel: options.codexHtmlModel,
-      generationSource: 'codex-tmux-pdf-first-single-chain',
+      generationSource: providerGenerationSourceLabel(provider),
       htmlValidation,
       standaloneValidation
     };
@@ -1255,7 +1273,9 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
     arxivId: paper.arxivId || '',
     status: 'running',
     stage: 'prepare',
-    architecture: 'pdf-first-paper-scoped-tmux-codex-single-chain',
+    architecture: options.htmlProvider === 'claude-code'
+      ? 'pdf-first-paper-scoped-claude-code-single-chain'
+      : 'pdf-first-paper-scoped-tmux-codex-single-chain',
     htmlGenerationMode: options.fastSmoke ? 'fast-smoke' : 'full',
     maxAttempts: DEFAULT_HTML_GENERATION_MAX_ATTEMPTS,
     selectedAttempt: null,
@@ -1278,7 +1298,8 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
 
   for (let attemptNumber = 1; attemptNumber <= DEFAULT_HTML_GENERATION_MAX_ATTEMPTS; attemptNumber += 1) {
     const attemptPaths = buildPaperHtmlAttemptPaths(paperDir, attemptNumber);
-    const attemptRuntimePaths = buildCodexHtmlTmuxRunPaths({
+    const attemptRuntimePaths = buildProviderRunPaths({
+      provider: options.htmlProvider || 'codex',
       workingDir: paperDir,
       targetHtmlPath: attemptPaths.htmlPath,
       finalMessagePath: attemptPaths.finalMessagePath

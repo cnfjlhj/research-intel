@@ -10,6 +10,10 @@ const { sendTelegramDocument } = require('./lib/telegram');
 const ROOT_DIR = path.join(__dirname, '../..');
 const DEFAULT_PROFILE_DIR = path.join(ROOT_DIR, 'work/research-intel/profile');
 const DEFAULT_RECORDS_DIR = path.join(ROOT_DIR, 'research-intel-records');
+const ALLOWED_GENERATION_METHODS = new Set([
+  'codex-tmux-pdf-first-single-chain',
+  'claude-code-print-pdf-first-single-chain'
+]);
 const BLOCKED_DISCOVERY_SOURCE_PATTERNS = [
   /\bmanual_backup_rebuild\b/i,
   /\bbackup_rebuild\b/i,
@@ -221,7 +225,7 @@ function inspectReleaseArtifacts(rootDir, runDir) {
     const standaloneValidation = readJsonIfExists(standaloneValidationPath, {});
     const issues = [];
 
-    if (generationMethod !== 'codex-tmux-pdf-first-single-chain') {
+    if (!ALLOWED_GENERATION_METHODS.has(generationMethod)) {
       issues.push(`generationMethod=${generationMethod || '(empty)'}`);
     }
     if (/fallback|deterministic/i.test(generationMethod)) {
