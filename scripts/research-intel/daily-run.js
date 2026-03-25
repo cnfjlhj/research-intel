@@ -11,6 +11,7 @@ const { applyDailyCuration, curateDailySelection } = require('./lib/curation');
 const {
   buildEvidenceManifest,
   buildBodyFirstPdfContext,
+  buildCodexHtmlPrompt,
   buildCodexInlineHtmlPrompt,
   cleanHtmlResponse,
   injectEvidenceGallery,
@@ -1226,34 +1227,49 @@ async function generatePaperArtifacts(paper, index, runPaths, options, dateStrin
   }
 
   const templateHtml = options.htmlTemplate?.templateHtml || '';
-  const promptText = buildCodexInlineHtmlPrompt({
-    templateHtml,
-    paperPdfPath,
-    paperMetaPath,
-    paperMetaJson: fs.readFileSync(paperMetaPath, 'utf8'),
-    paperTextPath,
-    paperTextPreviewPath,
-    paperTextPreview: fs.readFileSync(paperTextPreviewPath, 'utf8'),
-    openreviewSummaryPath,
-    openreviewSummary: fs.readFileSync(openreviewSummaryPath, 'utf8'),
-    pageImagesDir,
-    pageTextsDir,
-    pageImageCount: attachedPageImages.length,
-    routeContextJson: JSON.stringify({
-      date: semanticContext.route?.date || dateString,
-      route_logic: semanticContext.route?.routeLogic || '',
-      ordered_paper_ids: (semanticContext.route?.orderedPapers || []).map(item => item.paperId),
-      current_paper_id: paper.paperId,
-      current_route_role: paper.routeRole
-    }, null, 2),
-    dependencyCardsJson: JSON.stringify((semanticContext.dependencyCards || []).map(card => ({
-      paper_id: card.paperId,
-      title: card.title,
-      route_role: card.routeRole || '',
-      compare_axes: card.compareAxes || [],
-      why_relevant_to_current: card.whyRelevantToCurrent || ''
-    })), null, 2)
-  });
+  const templatePath = options.htmlTemplate?.templatePath || '';
+  const isClaudeCodeProvider = (options.htmlProvider === 'claude-code');
+
+  // Claude Code has tools (Read/Write) and can read files itself, so use file-ref
+  // prompt to stay within API request size limits. Codex needs everything inlined.
+  const promptText = isClaudeCodeProvider
+    ? buildCodexHtmlPrompt({
+        templatePath,
+        targetHtmlPath: path.join(paperDir, 'index.html'),
+        paperMetaPath,
+        paperTextPath,
+        openreviewSummaryPath,
+        openreviewThreadPath: '',
+        attachedPageImages
+      })
+    : buildCodexInlineHtmlPrompt({
+        templateHtml,
+        paperPdfPath,
+        paperMetaPath,
+        paperMetaJson: fs.readFileSync(paperMetaPath, 'utf8'),
+        paperTextPath,
+        paperTextPreviewPath,
+        paperTextPreview: fs.readFileSync(paperTextPreviewPath, 'utf8'),
+        openreviewSummaryPath,
+        openreviewSummary: fs.readFileSync(openreviewSummaryPath, 'utf8'),
+        pageImagesDir,
+        pageTextsDir,
+        pageImageCount: attachedPageImages.length,
+        routeContextJson: JSON.stringify({
+          date: semanticContext.route?.date || dateString,
+          route_logic: semanticContext.route?.routeLogic || '',
+          ordered_paper_ids: (semanticContext.route?.orderedPapers || []).map(item => item.paperId),
+          current_paper_id: paper.paperId,
+          current_route_role: paper.routeRole
+        }, null, 2),
+        dependencyCardsJson: JSON.stringify((semanticContext.dependencyCards || []).map(card => ({
+          paper_id: card.paperId,
+          title: card.title,
+          route_role: card.routeRole || '',
+          compare_axes: card.compareAxes || [],
+          why_relevant_to_current: card.whyRelevantToCurrent || ''
+        })), null, 2)
+      });
   writeText(promptPath, `${promptText}\n`);
   const inputCostSignals = buildHtmlInputCostSignals({
     promptText,
